@@ -757,13 +757,13 @@ namespace Jondo.Unity.Server.Network
                 else if (payloadStr.Contains(Op.Uri(Op.Kcr)))
                 {
                     // kcr est commun aux échanges. Un atelier ouvert a priorité sur le coffre;
-                    // il confirme l'ajout avec kex, la liste d'ingrédients de l'atelier.
+                    // il confirme l'ajout avec la liste de composants kfb de l'atelier.
                     if (WorkshopHandler.TryMoveIngredient(payload, out byte[] added))
                     {
                         if (added.Length > 0)
                         {
                             await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
-                                ConnectionProtocol.Push(Op.Kex, added));
+                                ConnectionProtocol.Push(Op.Kfb, added));
                         }
                     }
                     else
@@ -830,13 +830,14 @@ namespace Jondo.Unity.Server.Network
                         foreach (byte[] added in addedPayloads)
                         {
                             await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
-                                ConnectionProtocol.Push(Op.Kex, added));
+                                ConnectionProtocol.Push(Op.Kfb, added));
                         }
                     }
                 }
-                else if (payloadStr.Contains(Op.Uri(Op.Lmr)))
+                else if (payloadStr.Contains(Op.Uri(Op.Kep)))
                 {
-                    // Le bouton FUSIONNER: équivalent 3.6.10.10 du kcs capturé en 3.6.11.15.
+                    // Le bouton FUSIONNER. Le 3.6.10.10 envoie kep { f1:true, f2:2 };
+                    // son successeur 3.6.11.15 est kcs { f2:true, f3:2 }.
                     await WorkshopHandler.TryCraftAsync(stream, payload);
                 }
                 else if (payloadStr.Contains("type.ankama.com/kla"))

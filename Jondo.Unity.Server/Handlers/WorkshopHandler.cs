@@ -119,7 +119,7 @@ namespace Jondo.Unity.Server.Handlers
             string auxiliary = auxiliaryValue == 0 ? "absent/0" : auxiliaryValue.ToString();
             Console.WriteLine($"[Ateliers] Recette {resultId} sélectionnée pour la compétence " +
                               $"{skillId}: {recipe.Ingredients.Count} ingrédient(s), " +
-                              $"{ingredients.Count} pile(s) envoyée(s) par kex, f1={auxiliary}.");
+                              $"{ingredients.Count} pile(s) envoyée(s) par kfb, f1={auxiliary}.");
             return true;
         }
 
@@ -195,35 +195,29 @@ namespace Jondo.Unity.Server.Handlers
             int quantity = requested == 0 ? item.Quantity : Math.Min(requested, item.Quantity);
             SessionContext.State.SelectedWorkshopIngredients[uid] = quantity;
             addedPayload = ConnectionProtocol.BuildWorkshopIngredientAdded(item, quantity);
-            Console.WriteLine($"[Ateliers] Pile {uid} x{quantity} ajoutée manuellement par kex.");
+            Console.WriteLine($"[Ateliers] Pile {uid} x{quantity} ajoutée manuellement par kfb.");
             return true;
         }
 
         /// <summary>
-        /// Traite la validation de fabrication 3.6.10.10 (<c>lmr</c>). La capture 3.6.11.15
-        /// envoie son équivalent <c>kcs</c> sous la forme f2=true, f3=2. Le troisième champ est
-        /// une étape du dialogue, pas une quantité: une validation produit donc un seul objet.
+        /// Traite la validation de fabrication 3.6.10.10 (<c>kep</c>) sous la forme f1=true,
+        /// f2=2. La capture 3.6.11.15 envoie son successeur <c>kcs</c> sous la forme f2=true,
+        /// f3=2. L'entier est une étape du dialogue, pas une quantité: une validation produit
+        /// donc un seul objet.
         /// </summary>
         public static async Task<bool> TryCraftAsync(NetworkStream stream, byte[] frame)
         {
             if (!IsOpen) return false;
 
-            byte[]? body = ConnectionProtocol.ReadPayload(frame, Op.Lmr);
-            if (body == null) return false;
-
-            bool ready = false;
-            int step = 0;
-            foreach (var field in ProtoMessage.Parse(body).Fields)
+            if (!TryReadCraftRequest(frame, out bool ready, out int step, out string requestError))
             {
-                if (field.WireType != 0) continue;
-                if (field.FieldNumber == 2) ready = field.VarIntValue != 0;
-                else if (field.FieldNumber == 3 && field.VarIntValue <= int.MaxValue)
-                    step = (int)field.VarIntValue;
+                Console.WriteLine($"[Ateliers] Validation kep invalide: {requestError}.");
+                return true;
             }
 
             if (!ready)
             {
-                Console.WriteLine($"[Ateliers] Validation lmr ignorée: prêt=false, étape {step}.");
+                Console.WriteLine($"[Ateliers] Validation kep ignorée: prêt=false, étape {step}.");
                 return true;
             }
 
@@ -265,32 +259,16 @@ namespace Jondo.Unity.Server.Handlers
                             ConnectionProtocol.BuildItemGone(ingredient.Item.Uid)));
             }
 
-            var existing = Equipment.All.FirstOrDefault(item =>
-                item.Template == resultId && item.Position == Equipment.Bag);
-            var stored = DatabaseManager.AddItemToInventory(characterId, resultId, 1);
-            Equipment.Item crafted;
-            if (existing != null && existing.Uid == stored.Uid)
+            var crafted = Equipment.CreateCrafted(resultId);
+            if (crafted == null)
             {
-                existing.Quantity = stored.Quantity;
-                crafted = existing;
-                await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
-                    ConnectionProtocol.Push(Op.Ivj,
-                        ConnectionProtocol.BuildItemQuantity(crafted.Uid, crafted.Quantity)));
+                Console.WriteLine($"[Ateliers] Fabrication {resultId} interrompue: impossible " +
+                                  "de créer l'objet avec ses effets.");
+                return true;
             }
-            else
-            {
-                crafted = Equipment.Add(stored.Uid, resultId, stored.Quantity,
-                                        Equipment.Bag, stored.RawEffects);
-                await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
-                    ConnectionProtocol.Push(Op.Itd, ConnectionProtocol.BuildItemArrived(3,
-                        new HavenBagStore.StoredItem
-                        {
-                            Uid = crafted.Uid,
-                            Gid = crafted.Template,
-                            Quantity = crafted.Quantity,
-                            Effects = stored.RawEffects,
-                        })));
-            }
+            await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
+                ConnectionProtocol.Push(Op.Itd,
+                    ConnectionProtocol.BuildItemArrived(3, crafted)));
 
             await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
                 ConnectionProtocol.Push(Op.Kdr,
@@ -309,8 +287,48 @@ namespace Jondo.Unity.Server.Handlers
                     0, 1000 + 5L * SessionContext.State.StatStrength)));
 
             SessionContext.State.SelectedWorkshopIngredients.Clear();
-            Console.WriteLine($"[Ateliers] Recette {resultId} fabriquée (étape lmr {step}), " +
-                              $"objet {crafted.Uid}, +{craftExperience} XP métier.");
+            Console.WriteLine($"[Ateliers] Recette {resultId} fabriquée (étape kep {step}), " +
+                              $"objet {crafted.Uid}, effets {crafted.Effects}, " +
+                              $"+{craftExperience} XP métier.");
+            return true;
+        }
+
+        /// <summary>Décode le <c>kep</c> observé au clic sur Fusionner.</summary>
+        public static bool TryReadCraftRequest(byte[] frame, out bool ready, out int step,
+                                               out string error)
+        {
+            ready = false;
+            step = 0;
+            error = "";
+
+            byte[]? body = ConnectionProtocol.ReadPayload(frame, Op.Kep);
+            if (body == null)
+            {
+                error = "enveloppe kep absente";
+                return false;
+            }
+
+            foreach (var field in ProtoMessage.Parse(body).Fields)
+            {
+                if ((field.FieldNumber == 1 || field.FieldNumber == 2) && field.WireType != 0)
+                {
+                    error = $"le champ {field.FieldNumber} n'est pas un varint";
+                    return false;
+                }
+                if (field.WireType != 0) continue;
+
+                if (field.FieldNumber == 1) ready = field.VarIntValue != 0;
+                else if (field.FieldNumber == 2)
+                {
+                    if (field.VarIntValue < 0 || field.VarIntValue > int.MaxValue)
+                    {
+                        error = "l'étape f2 dépasse int32";
+                        return false;
+                    }
+                    step = (int)field.VarIntValue;
+                }
+            }
+
             return true;
         }
 

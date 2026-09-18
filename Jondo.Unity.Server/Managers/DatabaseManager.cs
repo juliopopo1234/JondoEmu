@@ -2643,7 +2643,8 @@ namespace Jondo.Unity.Server
         /// (suerte), los cuatro con dado 5, que es "de 1 a 5". Se le da el máximo, que es lo que un
         /// objeto de estreno debería llevar.
         /// </summary>
-        private static string EffectsOfTemplate(SqliteConnection connection, int gid)
+        private static string EffectsOfTemplate(SqliteConnection connection, int gid,
+                                                bool randomize = false)
         {
             try
             {
@@ -2662,8 +2663,10 @@ namespace Jondo.Unity.Server
                     if (!entrada.TryGetProperty("rid", out var rid)) continue;
 
                     var efecto = connection.CreateCommand();
-                    efecto.CommandText = "SELECT EffectId, DiceNum, DiceSide, Value FROM ItemEffects " +
-                                         "WHERE Rid = $rid;";
+                    efecto.CommandText = "SELECT i.EffectId, i.DiceNum, i.DiceSide, i.Value, " +
+                                         "COALESCE(e.Category, 0), COALESCE(e.UseDice, 0) " +
+                                         "FROM ItemEffects i LEFT JOIN Effects e ON e.Id = i.EffectId " +
+                                         "WHERE i.Rid = $rid;";
                     efecto.Parameters.AddWithValue("$rid", rid.GetInt64());
 
                     using var reader = efecto.ExecuteReader();
@@ -2673,9 +2676,34 @@ namespace Jondo.Unity.Server
                     int diceNum = reader.GetInt32(1);
                     int diceSide = reader.GetInt32(2);
                     int value = reader.GetInt32(3);
+                    int category = reader.GetInt32(4);
+                    bool useDice = reader.GetInt32(5) != 0;
                     if (id == 0) continue;
 
-                    // El valor de estreno: el tope del dado si lo hay, y si no, el fijo.
+                    // Los efectos ordinarios de un objeto fabricado se resuelven una vez, en el
+                    // momento de crearlo. ItemEffects guarda para ellos el mínimo en DiceNum y el
+                    // máximo en DiceSide (Le Plussain: 4..6 en 118 y 119). Los daños de arma de
+                    // categoría 2 y los efectos compuestos conservan sus tres parámetros: ahí los
+                    // dos dados describen el efecto que debe viajar, no un jet de característica.
+                    if (randomize && useDice && category != 2)
+                    {
+                        int minimum = diceNum != 0 ? diceNum : 1;
+                        int maximum = diceSide != 0 ? diceSide : minimum;
+                        if (maximum < minimum) (minimum, maximum) = (maximum, minimum);
+                        int rolled = value != 0
+                            ? value
+                            : (int)Random.Shared.NextInt64(minimum, (long)maximum + 1);
+                        salida.Add($"[{id},{rolled},0,0]");
+                        continue;
+                    }
+
+                    if (randomize)
+                    {
+                        salida.Add($"[{id},{value},{diceNum},{diceSide}]");
+                        continue;
+                    }
+
+                    // Los premios existentes conservan su comportamiento histórico: jet máximo.
                     int fijo = value != 0 ? value : (diceSide != 0 ? diceSide : diceNum);
                     salida.Add($"[{id},{fijo},0,0]");
                 }
@@ -2750,6 +2778,36 @@ namespace Jondo.Unity.Server
             catch (Exception ex)
             {
                 Console.WriteLine($"[SQLite] No se pudo leer la plantilla {gid}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Reads an item template and resolves each ordinary variable effect to one random value.
+        /// Weapon ranges and compound effects remain ranges/tuples because their dice are protocol
+        /// parameters rather than a characteristic roll.
+        /// </summary>
+        public static bool TryRollItemTemplateEffects(int gid, out string effects)
+        {
+            effects = "[]";
+            if (gid <= 0) return false;
+
+            try
+            {
+                using var connection = new SqliteConnection(WorldConnectionString);
+                connection.Open();
+
+                var exists = connection.CreateCommand();
+                exists.CommandText = "SELECT 1 FROM ItemTemplates WHERE Id = $gid LIMIT 1;";
+                exists.Parameters.AddWithValue("$gid", gid);
+                if (exists.ExecuteScalar() == null) return false;
+
+                effects = EffectsOfTemplate(connection, gid, randomize: true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SQLite] No se pudo tirar la plantilla {gid}: {ex.Message}");
                 return false;
             }
         }

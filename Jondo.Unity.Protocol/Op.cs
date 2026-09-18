@@ -1125,14 +1125,25 @@ public static class Op
     /// </summary>
     public const string Kew = "kew";
 
-    /// <summary>Liste d'objets ajoutés à l'atelier: objets <c>lec</c> répétés en f2.</summary>
+    /// <summary>Liste groupée d'un autre mode d'échange; objets <c>lec</c> répétés en f2.</summary>
     public const string Kex = "kex";
 
     /// <summary>
-    /// Ajoute un objet à un échange unitaire. Son objet <c>lec</c> utilise f5; ce n'est pas la
-    /// liste de sélection de recette de l'atelier, qui voyage dans <c>kex</c>.
+    /// Ajoute un objet à un échange unitaire. Ce message n'alimente pas la liste de CraftUi.
     /// </summary>
     public const string Kev = "kev";
+
+    /// <summary>
+    /// Validation de la fabrication par le bouton Fusionner: f1 indique que le joueur est prêt
+    /// et f2 porte l'étape du dialogue.
+    /// </summary>
+    public const string Kep = "kep";
+
+    /// <summary>
+    /// Liste des composants de l'atelier 3.6.10.10: objets <c>lec</c> répétés en f1,
+    /// indicateur en f2 et coefficient flottant en f3.
+    /// </summary>
+    public const string Kfb = "kfb";
 
     /// <summary>No implementado. Exclusivo de las capturas de interactivos varios (Interactivos varios); 9 mensajes.</summary>
     public const string Kgp = "kgp";

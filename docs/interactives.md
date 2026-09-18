@@ -450,23 +450,30 @@ an observed auxiliary value and does not guess its meaning. The server accepts t
 while an atelier is open and only when the result belongs to that atelier's skill; the selected
 result is session-local and is cleared on open, close and map change.
 
-When every required quantity is present in the bag, the server answers with one `kev` per selected
-stack. `kev` is handled by the same 3.6.10.10 client exchange component as the workshop-opening
-`kgq`; `kex`, despite its superficially compatible repeated-item shape, belongs to a different
-client component and is ignored by the craft window. Each `kev.f1` is a `lec` exchange object whose
-`llk` body is carried by `lec.f5`, with the real inventory UID but only the quantity required by the
-recipe. This is not inferred from the descriptor alone: the native 3.6.10.10 handler
-`emc::etj(kev)` dereferences `lec+0x30`, the backing slot of f5, and returns without updating the UI
-when that pointer is null. The chosen stacks and quantities are retained in the
+When every required quantity is present in the bag, the server answers with one `kfb` per selected
+stack. The official 3.6.11.15 `kdb` carries a zero float and a repeated exchange object; this is the
+same signature as 3.6.10.10 `kfb`, whose field numbers are ordered differently: `lec` objects in f1,
+the optional boolean in f2 and the float in f3. Each `kfb.f1` is therefore a `lec` exchange object
+whose `llk` body is carried by `lec.f5`, with the real inventory UID but only the quantity required
+by the recipe. The chosen stacks and quantities are retained in the
 session so a later craft request can verify and consume exactly what the client displays. Equipped
 items are never selected automatically, and nothing is removed from the inventory at this stage.
 Manual placement uses the same exchange path: while a workshop is open, `kcr { f1: quantity,
 f2: inventory uid }` is routed to the workshop (rather than the chest handler) and acknowledged by
-the same singular `kev` event.
+the same `kfb` component-list event.
 
-Executing the recipe is deliberately still out of scope: the supplied captures did not press the
-craft button, so no craft request or result packet has been invented. Repeated `kew` clicks remain
-idempotent and never consume or create items.
+Pressing **Fusionner** sends `kep { f1: true, f2: 2 }` in 3.6.10.10. This is the direct ancestor
+of the captured 3.6.11.15 `kcs { f2: true, f3: 2 }`: the field numbers moved by one, while the
+boolean ready flag and dialogue-step value stayed the same. The step is not a requested quantity;
+one accepted validation crafts one result.
+
+An accepted validation consumes the exact retained ingredient stacks, creates one result and sends
+the inventory arrival followed by the successful craft result and profession experience. Crafted
+equipment is always a distinct inventory row with its own UID: it is not merged by template id,
+because two copies can carry different characteristics. Ordinary `UseDice` effects are resolved
+once from the template's inclusive `DiceNum..DiceSide` interval; for example Le Plussain (8537)
+gets one independent 4..6 roll for strength (118) and one for agility (119). Weapon damage ranges
+and compound effects keep their original parameters instead of being mistaken for item rolls.
 
 ---
 

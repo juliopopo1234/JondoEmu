@@ -626,7 +626,7 @@ namespace JondoFix
 
         /// <summary>
         /// Trace le chemin exact d'un objet ajoute a la barre d'atelier. Le trafic serveur ne peut
-        /// dire que « kex est arrive » ; ces points disent si le client l'a decode, l'a range
+        /// dire que « kfb est arrive » ; ces points disent si le client l'a decode, l'a range
         /// dans sa liste locale, puis l'a remis a CraftUi. Les noms obfusques sont ceux du client
         /// 3.6.10.10 et le patch reste facultatif : un renommage au prochain client n'empechera pas
         /// JondoFix de charger.
@@ -662,13 +662,15 @@ namespace JondoFix
                     }
                 }
 
-                // kex est reçu par emv::zvk, contrairement au kev unitaire reçu par emc.
-                var workshopList = workshop.GetMethods(System.Reflection.BindingFlags.Public |
-                                                         System.Reflection.BindingFlags.NonPublic |
-                                                         System.Reflection.BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name == "zvk");
-                if (workshopList != null)
+                // kex et kfb sont deux listes reçues par emv; zvl est le chemin kfb de l'atelier.
+                foreach (string name in new[] { "zvk", "zvl" })
                 {
+                    var workshopList = workshop.GetMethods(
+                            System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.NonPublic |
+                            System.Reflection.BindingFlags.Instance)
+                        .FirstOrDefault(m => m.Name == name);
+                    if (workshopList == null) continue;
                     harmony.Patch(workshopList, prefix: prefix);
                     count++;
                 }
@@ -686,7 +688,7 @@ namespace JondoFix
                     }
                 }
 
-                LoggerInstance.Msg($"[JondoFix] Trace atelier activee sur {count}/6 points.");
+                LoggerInstance.Msg($"[JondoFix] Trace atelier activee sur {count}/7 points.");
             }
             catch (Exception ex)
             {

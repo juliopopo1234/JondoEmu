@@ -2169,13 +2169,17 @@ namespace Jondo.Unity.Server.Network
         }
 
         /// <summary>
-        /// Un ingrédient placé dans la barre artisan. En 3.6.10.10, <c>kex</c> contient la liste
-        /// des objets en f2. La capture officielle 3.6.11.15 confirme la même disposition dans
-        /// son successeur obfusqué <c>kdb</c>: un paquet par ingrédient et l'objet d'échange dans
-        /// le champ répété 2. L'objet <c>lec</c> conserve son corps <c>llk</c> en f5.
+        /// Un ingrédient placé dans la barre artisan. Le <c>kdb</c> officiel 3.6.11.15 contient
+        /// un flottant nul et une liste d'objets; la signature correspond à <c>kfb</c> dans le
+        /// descripteur 3.6.10.10, avec les champs réordonnés entre versions. En 3.6.10.10,
+        /// l'objet <c>lec</c> est donc en f1 et le flottant en f3. Son corps <c>llk</c> reste en
+        /// <c>lec.f5</c>.
         /// </summary>
         public static byte[] BuildWorkshopIngredientAdded(Managers.Equipment.Item item, int quantity)
-            => Pb.New().Msg(2, ExchangeEntry(item, quantity)).Build();
+            => Pb.New()
+                .Msg(1, ExchangeEntry(item, quantity))
+                .Fixed32(3, BitConverter.GetBytes(0f))
+                .Build();
 
         /// <summary>
         /// Résultat positif d'une fabrication 3.6.10.10. <c>kdr</c> est l'ancêtre structurel du

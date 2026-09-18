@@ -536,6 +536,49 @@ namespace Jondo.Unity.Server.Managers
         }
 
         /// <summary>
+        /// Creates one crafted item with its own rolled effects and UID.
+        /// </summary>
+        /// <remarks>
+        /// Equipment with variable characteristics must never use the generic inventory stacking
+        /// path: two copies of the same template can have different rolls. The caller owns the
+        /// workshop packets; this method only keeps the database and both inventory caches aligned.
+        /// </remarks>
+        public static HavenBagStore.StoredItem? CreateCrafted(int gid)
+        {
+            if (!DatabaseManager.TryRollItemTemplateEffects(gid, out string effects)) return null;
+
+            long uid = DatabaseManager.NextItemUid();
+            if (!DatabaseManager.InsertCharacterItem(uid, SessionContext.State.CharacterId, gid, 1,
+                                                     Bag, effects))
+                return null;
+
+            Add(uid, gid, 1, Bag, effects);
+
+            var legacy = new PlayerItem
+            {
+                Uid = uid,
+                ItemId = gid,
+                Quantity = 1,
+                Position = Bag,
+                RawEffects = effects,
+            };
+            foreach (var effect in ParseEffects(effects))
+            {
+                legacy.Effects.TryGetValue(effect.Effect, out int had);
+                legacy.Effects[effect.Effect] = had + (int)effect.Value;
+            }
+            GameState.AddInventoryItem(legacy);
+
+            return new HavenBagStore.StoredItem
+            {
+                Uid = uid,
+                Gid = gid,
+                Quantity = 1,
+                Effects = effects,
+            };
+        }
+
+        /// <summary>
         /// The one place the worn-item cache is written.
         /// </summary>
         /// <remarks>
