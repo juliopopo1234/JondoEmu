@@ -176,6 +176,13 @@ namespace Jondo.Unity.Server
         /// <summary>La casilla del mundo desde la que se entró al merkasako.</summary>
         public int HavenBagEntryCell { get; set; }
         public bool IsChestOpen { get; set; }
+        /// <summary>La compétence du poste de fabrication ouvert, zéro si aucun atelier ne l'est.</summary>
+        public int OpenWorkshopSkillId { get; set; }
+        /// <summary>L'objet résultat sélectionné par <c>kew</c>, zéro si aucune recette ne l'est.</summary>
+        public int SelectedWorkshopRecipeResultId { get; set; }
+        /// <summary>Piles réservées dans la barre artisan: UID d'inventaire vers quantité.</summary>
+        public Dictionary<long, int> SelectedWorkshopIngredients { get; }
+            = new Dictionary<long, int>();
         public bool IsHavenBagEditing { get; set; }
         public List<Managers.HavenBagStore.Furniture> PendingHavenBagFurniture { get; }
             = new List<Managers.HavenBagStore.Furniture>();

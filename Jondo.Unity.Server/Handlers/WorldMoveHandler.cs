@@ -236,6 +236,7 @@ namespace Jondo.Unity.Server.Handlers
 
             // El mapa cambia: lo que estuviera abierto en el anterior deja de estarlo.
             NpcHandler.Forget();
+            WorkshopHandler.Forget();
 
             Jondo.Unity.Server.Network.SessionContext.State.MapId = target;
             Jondo.Unity.Server.Network.SessionContext.State.CellId = arrival;

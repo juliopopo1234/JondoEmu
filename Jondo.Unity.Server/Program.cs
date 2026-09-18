@@ -95,6 +95,7 @@ namespace Jondo.Unity.Server
             Managers.SkillManager.Initialize();
             Managers.RecipeManager.Initialize();
             Managers.Interactives.Initialize();
+            Managers.Workshops.Initialize();
             Managers.HavenBagStore.Initialize();
             Managers.Wardrobe.Initialize();
             Managers.Titles.Initialize();

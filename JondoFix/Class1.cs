@@ -624,6 +624,76 @@ namespace JondoFix
             }
         }
 
+        /// <summary>
+        /// Trace le chemin exact d'un objet ajoute a la barre d'atelier. Le trafic serveur ne peut
+        /// dire que « kex est arrive » ; ces points disent si le client l'a decode, l'a range
+        /// dans sa liste locale, puis l'a remis a CraftUi. Les noms obfusques sont ceux du client
+        /// 3.6.10.10 et le patch reste facultatif : un renommage au prochain client n'empechera pas
+        /// JondoFix de charger.
+        /// </summary>
+        private void PatchWorkshopDiagnostics()
+        {
+            try
+            {
+                var harmony = new HarmonyLib.Harmony("com.jondo.fix.workshop.trace");
+                // GetTypes() échoue partiellement sur les assemblages Il2Cpp et faisait tomber
+                // silencieusement ces deux recherches à null (trace active sur 0/5). Les wrappers
+                // sont des références de compilation du mod: les prendre directement est fiable.
+                Type exchange = typeof(Il2Cpp.emc);
+                Type workshop = typeof(Il2Cpp.emv);
+                Type craftUi = typeof(Il2CppCore.UILogic.Crafting.CraftUi);
+
+                var prefix = new HarmonyMethod(typeof(WorkshopTracePatch).GetMethod(
+                    nameof(WorkshopTracePatch.Prefix),
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+                int count = 0;
+
+                if (exchange != null)
+                {
+                    foreach (string name in new[] { "mof", "etj", "zor", "zog" })
+                    {
+                        var method = exchange.GetMethods(System.Reflection.BindingFlags.Public |
+                                                         System.Reflection.BindingFlags.NonPublic |
+                                                         System.Reflection.BindingFlags.Instance)
+                            .FirstOrDefault(m => m.Name == name);
+                        if (method == null) continue;
+                        harmony.Patch(method, prefix: prefix);
+                        count++;
+                    }
+                }
+
+                // kex est reçu par emv::zvk, contrairement au kev unitaire reçu par emc.
+                var workshopList = workshop.GetMethods(System.Reflection.BindingFlags.Public |
+                                                         System.Reflection.BindingFlags.NonPublic |
+                                                         System.Reflection.BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "zvk");
+                if (workshopList != null)
+                {
+                    harmony.Patch(workshopList, prefix: prefix);
+                    count++;
+                }
+
+                if (craftUi != null)
+                {
+                    var method = craftUi.GetMethods(System.Reflection.BindingFlags.Public |
+                                                    System.Reflection.BindingFlags.NonPublic |
+                                                    System.Reflection.BindingFlags.Instance)
+                        .FirstOrDefault(m => m.Name == "OnPlayerListUpdate");
+                    if (method != null)
+                    {
+                        harmony.Patch(method, prefix: prefix);
+                        count++;
+                    }
+                }
+
+                LoggerInstance.Msg($"[JondoFix] Trace atelier activee sur {count}/6 points.");
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[JondoFix] Trace atelier indisponible: {ex.Message}");
+            }
+        }
+
         public override void OnLateInitializeMelon()
         {
             if (!UseLocalRedirect) return;
@@ -631,6 +701,7 @@ namespace JondoFix
             LoggerInstance.Msg("[JondoFix] Late initialization starting...");
             PatchUnDiacriticalName();
             PatchNpcName();
+            PatchWorkshopDiagnostics();
             try
             {
                 var harmony = new HarmonyLib.Harmony("com.jondo.fix.late");
@@ -892,6 +963,26 @@ namespace JondoFix
             }
             catch {}
             return false;
+        }
+    }
+
+    public static class WorkshopTracePatch
+    {
+        public static void Prefix(System.Reflection.MethodBase __originalMethod, object[] __args)
+        {
+            try
+            {
+                string args = __args == null
+                    ? ""
+                    : string.Join(", ", __args.Select((value, index) =>
+                        $"a{index}={(value == null ? "null" : value.GetType().Name + ":" + value)}"));
+                MelonLogger.Msg($"[JondoFix Atelier] {__originalMethod.DeclaringType?.Name}." +
+                                $"{__originalMethod.Name}({args})");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[JondoFix Atelier] trace impossible: {ex.Message}");
+            }
         }
     }
 

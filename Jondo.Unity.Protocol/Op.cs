@@ -68,6 +68,9 @@ public static class Op
     /// <summary>Sin identificar. 2 usos en el emulador.</summary>
     public const string Hml = "hml";
 
+    /// <summary>Contexte d'atelier; vide à l'ouverture et à la fermeture dans les captures d'Incarnam.</summary>
+    public const string Hlm = "hlm";
+
     /// <summary>Los hechizos que tiene el personaje, cada uno al grado que abre su nivel.</summary>
     public const string Hms = "hms";
 
@@ -1098,6 +1101,9 @@ public static class Op
     /// <summary>Sin identificar. 1 uso en el emulador.</summary>
     public const string Kdg = "kdg";
 
+    /// <summary>Résultat d'une fabrication: résultat produit en f1 et statut en f3.</summary>
+    public const string Kdr = "kdr";
+
     /// <summary>Sin identificar. 1 uso en el emulador.</summary>
     public const string Kdk = "kdk";
 
@@ -1113,8 +1119,26 @@ public static class Op
     /// <summary>Sin identificar. 2 usos en el emulador.</summary>
     public const string Keh = "keh";
 
+    /// <summary>
+    /// Sélection d'une recette dans un atelier. Dans la capture 3.6.10.10, le champ 2 porte
+    /// l'identifiant de l'objet produit; le champ 1, facultatif, n'a pas encore été observé.
+    /// </summary>
+    public const string Kew = "kew";
+
+    /// <summary>Liste d'objets ajoutés à l'atelier: objets <c>lec</c> répétés en f2.</summary>
+    public const string Kex = "kex";
+
+    /// <summary>
+    /// Ajoute un objet à un échange unitaire. Son objet <c>lec</c> utilise f5; ce n'est pas la
+    /// liste de sélection de recette de l'atelier, qui voyage dans <c>kex</c>.
+    /// </summary>
+    public const string Kev = "kev";
+
     /// <summary>No implementado. Exclusivo de las capturas de interactivos varios (Interactivos varios); 9 mensajes.</summary>
     public const string Kgp = "kgp";
+
+    /// <summary>Ouvre l'interface de fabrication; f1 porte la compétence du poste.</summary>
+    public const string Kgq = "kgq";
 
     /// <summary>El cofre se cerro.</summary>
     public const string Khd = "khd";
@@ -1520,6 +1544,9 @@ public static class Op
 
     /// <summary>Sin identificar. 1 uso en el emulador.</summary>
     public const string Lnk = "lnk";
+
+    /// <summary>Validation d'une fabrication dans l'atelier: deux booléens puis l'étape en f3.</summary>
+    public const string Lmr = "lmr";
 
     /// <summary>Sin identificar. 2 usos en el emulador.</summary>
     public const string Lol = "lol";

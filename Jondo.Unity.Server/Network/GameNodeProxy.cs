@@ -459,6 +459,7 @@ namespace Jondo.Unity.Server.Network
                         // Nothing open survives a map change either: otherwise the X of the new
                         // map's zaap is taken by a conversation the player left behind.
                         NpcHandler.Forget();
+                        WorkshopHandler.Forget();
                         await Managers.Quests.SendMarksAsync(stream, GameState.MapId);
 
                         // Y si esto es una sala de mazmorra, el grupo se pone al tamaño del equipo.
@@ -755,8 +756,20 @@ namespace Jondo.Unity.Server.Network
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Kcr)))
                 {
-                    // Mover un objeto entre la bolsa y el cofre.
-                    await ChestHandler.MoveAsync(stream, payload);
+                    // kcr est commun aux échanges. Un atelier ouvert a priorité sur le coffre;
+                    // il confirme l'ajout avec kex, la liste d'ingrédients de l'atelier.
+                    if (WorkshopHandler.TryMoveIngredient(payload, out byte[] added))
+                    {
+                        if (added.Length > 0)
+                        {
+                            await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
+                                ConnectionProtocol.Push(Op.Kex, added));
+                        }
+                    }
+                    else
+                    {
+                        await ChestHandler.MoveAsync(stream, payload);
+                    }
                 }
                 else if (payloadStr.Contains("type.ankama.com/lyk"))
                 {
@@ -808,6 +821,24 @@ namespace Jondo.Unity.Server.Network
                     // Destruir un objeto del inventario.
                     await DestroyItemHandler.DestroyAsync(stream, payload);
                 }
+                else if (payloadStr.Contains(Op.Uri(Op.Kew)))
+                {
+                    // Choisir une recette remplit la barre avec les piles réelles, sans encore
+                    // les consommer. Les clics répétés restent donc idempotents.
+                    if (WorkshopHandler.TrySelectRecipe(payload, out var addedPayloads))
+                    {
+                        foreach (byte[] added in addedPayloads)
+                        {
+                            await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
+                                ConnectionProtocol.Push(Op.Kex, added));
+                        }
+                    }
+                }
+                else if (payloadStr.Contains(Op.Uri(Op.Lmr)))
+                {
+                    // Le bouton FUSIONNER: équivalent 3.6.10.10 du kcs capturé en 3.6.11.15.
+                    await WorkshopHandler.TryCraftAsync(stream, payload);
+                }
                 else if (payloadStr.Contains("type.ankama.com/kla"))
                 {
                     // El botón de cerrar del diálogo. Va vacío y espera respuesta: khd si lo que
@@ -827,7 +858,8 @@ namespace Jondo.Unity.Server.Network
                     // Va DELANTE del zaap porque el zaap es el caso por defecto y no tiene guarda
                     // propia: con la conversación abierta, cualquier orden que deje el zaap antes
                     // se queda con la X que era del diálogo.
-                    if (ChestHandler.IsOpen) await ChestHandler.CloseAsync(stream);
+                    if (WorkshopHandler.IsOpen) await WorkshopHandler.CloseAsync(stream);
+                    else if (ChestHandler.IsOpen) await ChestHandler.CloseAsync(stream);
                     else if (NpcHandler.IsShopOpen) await NpcHandler.CloseShopAsync(stream);
                     else if (NpcHandler.IsDialogueOpen) await NpcHandler.CloseAsync(stream, payload);
                     else await ZaapTravelHandler.CloseAsync(stream);

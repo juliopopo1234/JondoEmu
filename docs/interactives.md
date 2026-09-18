@@ -408,9 +408,9 @@ produces a gathered resource. `CraftHandler.TryResolve` resolves a workshop skil
 list; `TryResolveRecipe` additionally prevents a client from asking one workshop skill to execute
 a recipe owned by another.
 
-These handlers are the server-authoritative resolution layer, not yet the network execution
-layer. Two pieces of 3.6 evidence are still required before registering resource nodes and
-workshops in `InteractiveRegistry`:
+These handlers are the server-authoritative resolution layer. Resource nodes and the Incarnam
+workshops are now also connected to the network layer. Adding another workshop still requires the
+same two pieces of 3.6 evidence:
 
 1. a checked `(mapId, elementId) -> skillId/type` mapping;
 2. captures of the 3.6 messages that open a workshop and change/finish a resource state.
@@ -420,6 +420,53 @@ animation/category value and is not the interactive type sent in `jss`; treating
 would misdeclare zaaps, chests and resources. Giny 2.68 remains useful for behaviour and database
 architecture, but its packet classes and hard-coded element mappings must not be copied as 3.6
 protocol truth.
+
+### Incarnam workshops
+
+The nine captures in `JobsIncarnam` identify 30 craft stations on maps `153354240`, `153354242`,
+`153354244`, `153354248`, `153355264`, `153355266`, `153355268`, `153355270` and `153355272`.
+`Workshops` keeps the exact `(map, element, type, skill)` rows from their `jss` messages. The map
+element catalogue still supplies cell and graphic, so startup can reject a row if the client data
+and the capture ever stop agreeing.
+
+Opening a station replays the measured semantic sequence rather than a stored character frame:
+
+```text
+C  iwo { f1: skill instance, f2: element }
+S  iwn { f1: 1, f2: element, f4: skill, f5: character }
+S  iwi { f1: element, f3: skill }       only on the three stations where it was captured
+S  ivx { f1: 30, f3: inventory }        current character inventory in workshop context
+S  hlm {}
+S  kgq { f1: skill }
+```
+
+Closing with `kla` returns `khd { f3: 11 }`, the current `ivx`, and an empty `hlm`, in that order.
+This makes the stations clickable and opens/closes the correct craft window.
+
+Choosing a recipe sends `kew`. In the captured jeweller case its body is exactly
+`10 d9 42`, or `{ f2: 8537 }`: field 2 is the result item id. The 3.6.10.10 descriptor also declares
+an optional `int32` field 1, but no capture assigns it a value, so the handler preserves it only as
+an observed auxiliary value and does not guess its meaning. The server accepts the selection only
+while an atelier is open and only when the result belongs to that atelier's skill; the selected
+result is session-local and is cleared on open, close and map change.
+
+When every required quantity is present in the bag, the server answers with one `kev` per selected
+stack. `kev` is handled by the same 3.6.10.10 client exchange component as the workshop-opening
+`kgq`; `kex`, despite its superficially compatible repeated-item shape, belongs to a different
+client component and is ignored by the craft window. Each `kev.f1` is a `lec` exchange object whose
+`llk` body is carried by `lec.f5`, with the real inventory UID but only the quantity required by the
+recipe. This is not inferred from the descriptor alone: the native 3.6.10.10 handler
+`emc::etj(kev)` dereferences `lec+0x30`, the backing slot of f5, and returns without updating the UI
+when that pointer is null. The chosen stacks and quantities are retained in the
+session so a later craft request can verify and consume exactly what the client displays. Equipped
+items are never selected automatically, and nothing is removed from the inventory at this stage.
+Manual placement uses the same exchange path: while a workshop is open, `kcr { f1: quantity,
+f2: inventory uid }` is routed to the workshop (rather than the chest handler) and acknowledged by
+the same singular `kev` event.
+
+Executing the recipe is deliberately still out of scope: the supplied captures did not press the
+craft button, so no craft request or result packet has been invented. Repeated `kew` clicks remain
+idempotent and never consume or create items.
 
 ---
 

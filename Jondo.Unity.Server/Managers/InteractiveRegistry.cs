@@ -28,6 +28,9 @@ namespace Jondo.Unity.Server.Managers
         /// <summary>Un recurso de oficio: trigo, fresno, caladero, mineral.</summary>
         Gather,
 
+        /// <summary>Un poste d'atelier qui ouvre l'interface de fabrication.</summary>
+        Workshop,
+
         /// <summary>El pozo de los Suenos Infinitos, que abre la ventana del sueno.</summary>
         Dream,
 
@@ -220,6 +223,17 @@ namespace Jondo.Unity.Server.Managers
                     Register(mapId, new Interactives.Element(resource.ElementId, resource.Cell,
                                                              resource.Gfx),
                              resource.Type, InteractiveActionKind.Gather, resource.SkillId);
+            }
+
+            // Les trente postes des neuf ateliers d'Incarnam. Contrairement aux ressources, ils
+            // ne se reconnaissent pas par leur graphique: le jss capturé donne pour chacun le
+            // couple exact (carte, élément), son type et sa compétence de fabrication.
+            foreach (var station in Workshops.All)
+            {
+                var element = Interactives.ByElementId(station.MapId, station.ElementId);
+                if (element.Id == 0) continue;
+                Register(station.MapId, element, station.Type,
+                         InteractiveActionKind.Workshop, station.SkillId);
             }
 
             // Le jss officiel de l'atelier 192937990 déclare les huit éléments présents dans les

@@ -386,7 +386,9 @@ Dofus does not ship the item-to-look table: the server sends it. **2,371 of the 
 
 - ✅ What you gather lands in the inventory, and the amount grows with job level
 - ✅ Too low a job level blocks gathering the way the game does it
-- ❌ Crafting professions: workshops, the craft window, and the **4,858 recipes** already in the database
+- 🟡 Crafting professions: the **30 measured stations on Incarnam's 9 workshop maps** now open
+  the real craft window; `kew` recipe selection is validated and `kex` fills the ingredient bar
+  from real inventory stacks, while recipe execution still awaits a capture of the craft button
 
 ### 👹 NPCs and monsters
 <img width="954" height="836" alt="image" src="https://github.com/user-attachments/assets/78779a18-0cd2-4f5c-b403-0c39cd291bcb" />

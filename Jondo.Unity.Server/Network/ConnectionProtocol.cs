@@ -1724,6 +1724,13 @@ namespace Jondo.Unity.Server.Network
         public static byte[] BuildInteractiveUseEnded(int elementId, int skillId)
             => Pb.New().Var(1, elementId).Var(3, skillId).Build();
 
+        /// <summary>
+        /// Ouvre l'interface de fabrication (kgq). Dans toutes les utilisations capturées, son
+        /// seul champ est la compétence annoncée par le poste dans le jss.
+        /// </summary>
+        public static byte[] BuildWorkshopOpened(int skillId)
+            => Pb.New().Var(1, skillId).Build();
+
         /// <summary>Un destino de la lista de zaaps.</summary>
         public readonly struct ZaapDestination
         {
@@ -2145,22 +2152,56 @@ namespace Jondo.Unity.Server.Network
         ///
         /// The slot is left out when it is zero, as proto3 does everywhere: zero is the amulet.
         /// </summary>
-        public static byte[] BuildInventory()
-        {
-            var ivx = Pb.New();
-            foreach (var item in Managers.Equipment.All)
-            {
-                var body = Pb.New().Var(1, item.Template);
-                foreach (var effect in item.Effects)
-                {
-                    var entry = EffectEntry(effect);
-                    if (entry != null) body.Msg(2, entry);
-                }
-                body.Var(3, Math.Max(1, item.Quantity)).Var(4, item.Uid);
+        public static byte[] BuildInventory() => BuildInventory(0);
 
-                ivx.Msg(3, Pb.New().VarIfNotZero(1, item.Position).Msg(5, body));
-            }
+        /// <summary>
+        /// L'inventaire envoyé autour de la fenêtre d'atelier. Il a la même liste d'objets que
+        /// l'ivx d'entrée en jeu, avec son f1 = 30 mesuré à chaque ouverture et fermeture.
+        /// </summary>
+        public static byte[] BuildWorkshopInventory() => BuildInventory(30);
+
+        private static byte[] BuildInventory(int context)
+        {
+            var ivx = Pb.New().VarIfNotZero(1, context);
+            foreach (var item in Managers.Equipment.All)
+                ivx.Msg(3, InventoryEntry(item, item.Quantity));
             return ivx.Build();
+        }
+
+        /// <summary>
+        /// Un ingrédient placé dans la barre artisan. En 3.6.10.10, <c>kex</c> contient la liste
+        /// des objets en f2. La capture officielle 3.6.11.15 confirme la même disposition dans
+        /// son successeur obfusqué <c>kdb</c>: un paquet par ingrédient et l'objet d'échange dans
+        /// le champ répété 2. L'objet <c>lec</c> conserve son corps <c>llk</c> en f5.
+        /// </summary>
+        public static byte[] BuildWorkshopIngredientAdded(Managers.Equipment.Item item, int quantity)
+            => Pb.New().Msg(2, ExchangeEntry(item, quantity)).Build();
+
+        /// <summary>
+        /// Résultat positif d'une fabrication 3.6.10.10. <c>kdr</c> est l'ancêtre structurel du
+        /// <c>kbu</c> observé en 3.6.11.15: f1 est le modèle produit et la valeur 2 de l'énumération
+        /// signifie succès. Dans l'ancien message cette énumération se trouve en f3.
+        /// </summary>
+        public static byte[] BuildWorkshopCraftSucceeded(int resultId)
+            => Pb.New().Var(1, resultId).Var(3, 2).Build();
+
+        private static Pb ExchangeEntry(Managers.Equipment.Item item, int quantity)
+            => Pb.New().VarIfNotZero(1, item.Position).Msg(5, ItemBody(item, quantity));
+
+        private static Pb InventoryEntry(Managers.Equipment.Item item, int quantity)
+            => Pb.New().VarIfNotZero(1, item.Position).Msg(5, ItemBody(item, quantity));
+
+        private static Pb ItemBody(Managers.Equipment.Item item, int quantity)
+        {
+            var body = Pb.New().Var(1, item.Template);
+            foreach (var effect in item.Effects)
+            {
+                var entry = EffectEntry(effect);
+                if (entry != null) body.Msg(2, entry);
+            }
+            body.Var(3, Math.Max(1, quantity)).Var(4, item.Uid);
+
+            return body;
         }
 
         /// <summary>
