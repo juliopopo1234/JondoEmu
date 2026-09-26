@@ -210,6 +210,9 @@ namespace Jondo.Unity.Server
         /// <summary>The commission this character is in, as the magus or as the customer, if any.</summary>
         public Handlers.Commission? Commission { get; set; }
 
+        /// <summary>The trade with another player this character is in, asked or open, if any.</summary>
+        public Handlers.Trade? Trade { get; set; }
+
         /// <summary>
         /// This character's settings as an artisan, job by job: the minimum level asked of a
         /// customer, whether they craft for free, and whether they are in the public list.

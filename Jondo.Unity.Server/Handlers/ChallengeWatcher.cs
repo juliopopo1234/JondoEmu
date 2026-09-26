@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Jondo.Unity.Server.Managers;
@@ -496,6 +498,18 @@ namespace Jondo.Unity.Server.Handlers
         {
             if (fight.ChallengesFixed.Count == 0) return 0;
 
+            // Every player of the fight gets the same verdicts and the same bonus. The first one to
+            // reach this judges and records; the others are sent what he was sent. Judging again
+            // found everything already settled: a party's second player got no kwl and no bonus.
+            if (_ends.TryGetValue(fight.FightId, out var judged))
+            {
+                foreach (byte[] frame in judged.Frames) await WriteFrameAsync(stream, frame);
+                foreach (int done in judged.Achievements) DatabaseManager.MarkChallengeDone(GameState.CharacterId, done);
+                return judged.Extra;
+            }
+            var end = new EndVerdict();
+            _ends[fight.FightId] = end;
+
             // Estos dos sólo se pueden juzgar al final, porque hasta que no se acaba no se sabe.
 
             // Reparto: cada aliado tiene que haber rematado a alguien.
@@ -504,7 +518,7 @@ namespace Jondo.Unity.Server.Handlers
                 foreach (var aliado in fight.Azul)
                 {
                     if (fight.Killers.Contains(aliado.Id)) continue;
-                    await BreakAsync(stream, fight, Reparto, $"{aliado.Name} no ha rematado a nadie");
+                    await BreakAsync(stream, fight, Reparto, $"{aliado.Name} no ha rematado a nadie", record: end.Frames);
                     break;
                 }
             }
@@ -518,7 +532,7 @@ namespace Jondo.Unity.Server.Handlers
                     if (primera < 0) primera = ronda;
                     else if (ronda != primera)
                     {
-                        await BreakAsync(stream, fight, Dum,
+                        await BreakAsync(stream, fight, Dum, record: end.Frames, porque:
                                          $"han caído en rondas distintas ({primera} y {ronda})");
                         break;
                     }
@@ -532,8 +546,9 @@ namespace Jondo.Unity.Server.Handlers
 
                 bool cumplido = won;
                 fight.ChallengesBroken.Add(id);
-                await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kwl,
-                    Network.FightProtocol.BuildChallengeResult(id, cumplido)));
+                byte[] verdict = ConnectionProtocol.Push(Op.Kwl, Network.FightProtocol.BuildChallengeResult(id, cumplido));
+                end.Frames.Add(verdict);
+                await WriteFrameAsync(stream, verdict);
 
                 var reto = Challenges.Get(id);
                 Console.WriteLine($"[Retos] «{reto?.Name ?? id.ToString()}» " +
@@ -546,9 +561,43 @@ namespace Jondo.Unity.Server.Handlers
                 // Los que impone el sitio son los que llevan logro.
                 if (reto != null && reto.NeedsMonster)
                 {
+                    end.Achievements.Add(id);
                     DatabaseManager.MarkChallengeDone(GameState.CharacterId, id);
                     Console.WriteLine($"[Retos] Logro «{reto.Name}» conseguido; no volverá a salir.");
                 }
+            }
+            end.Extra = extra;
+            return extra;
+        }
+
+        /// <summary>What the end of a fight judged, to be sent the same to each of its players.</summary>
+        private sealed class EndVerdict
+        {
+            public List<byte[]> Frames { get; } = new List<byte[]>();
+            public List<int> Achievements { get; } = new List<int>();
+            public int Extra { get; set; }
+        }
+
+        private static readonly ConcurrentDictionary<long, EndVerdict> _ends = new ConcurrentDictionary<long, EndVerdict>();
+
+        /// <summary>The fight is over for everybody: its verdicts go.</summary>
+        public static void Forget(FightInstance fight) => _ends.TryRemove(fight.FightId, out _);
+
+        /// <summary>
+        /// The bonus a won fight's challenges will give, worked out without judging anything aloud:
+        /// the ones not broken, less "Reparto" when an ally finished nobody and "Dum" when they fell
+        /// on different rounds -- the two <see cref="FightEndedAsync"/> can only judge at the end.
+        /// </summary>
+        public static int EndBonus(FightInstance fight, bool won)
+        {
+            if (!won) return 0;
+            int extra = 0;
+            foreach (var (id, percent) in fight.ChallengesFixed)
+            {
+                if (fight.ChallengesBroken.Contains(id)) continue;
+                if (id == Reparto && fight.Azul.Any(a => !fight.Killers.Contains(a.Id))) continue;
+                if (id == Dum && fight.KilledOnRound.Values.Distinct().Count() > 1) continue;
+                extra += percent;
             }
             return extra;
         }
@@ -641,17 +690,19 @@ namespace Jondo.Unity.Server.Handlers
         /// roto en el golpe, no en la muerte.
         /// </summary>
         private static async Task BreakAsync(NetworkStream stream, FightInstance fight, int id,
-                                             string porque, string culpable = "")
+                                             string porque, string culpable = "", List<byte[]>? record = null)
         {
             if (!fight.ChallengesBroken.Add(id)) return;
 
-            await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kwl,
-                Network.FightProtocol.BuildChallengeResult(id, false)));
+            byte[] broken = ConnectionProtocol.Push(Op.Kwl, Network.FightProtocol.BuildChallengeResult(id, false));
+            await WriteFrameAsync(stream, broken);
 
             if (culpable.Length == 0) culpable = GameState.CharacterName;
-            await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Lqn,
-                ConnectionProtocol.BuildSystemMessage(ChallengeFailedMessage,
-                                                      culpable, id.ToString())));
+            byte[] notice = ConnectionProtocol.Push(Op.Lqn,
+                ConnectionProtocol.BuildSystemMessage(ChallengeFailedMessage, culpable, id.ToString()));
+            await WriteFrameAsync(stream, notice);
+            record?.Add(broken);
+            record?.Add(notice);
 
             Console.WriteLine($"[Retos] «{Challenges.Get(id)?.Name ?? id.ToString()}» ROTO: {porque}.");
         }

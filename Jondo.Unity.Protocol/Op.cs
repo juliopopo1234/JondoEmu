@@ -424,11 +424,29 @@ public static class Op
     /// <summary>Hay jefe nuevo: { f1: el nuevo jefe, f2: id del grupo }. Once bytes; NO se reenvia el grupo.</summary>
     public const string Ilx = "ilx";
 
-    /// <summary>Respuesta corta y VACIA a un ima. Ni siquiera lleva carga.</summary>
+    /// <summary>
+    /// Following the leader switched on or off: { f1: on }. Empty when off, 0801 when on; the
+    /// member's client answers the first with an imo and the second with an imh. Measured in
+    /// "Grupos/con grupo seguir desplazamiento del lider...": empty in the same segment as the
+    /// kmu of the leader leaving by zaap. The ima of "nombrar a otro jugador jefe" gets it empty.
+    /// </summary>
     public const string Imk = "imk";
 
-    /// <summary>Mientras el grupo sigue al lider: { f1: a quien se sigue, mapa, coordenadas, casilla }.</summary>
+    /// <summary>
+    /// Where the leader is, to the members following him: { f1: leader, f3 { f1: map, f2: x,
+    /// f4: subarea, f5: y }, f4: cell }. After every walk of his and every map change; it is
+    /// what makes the member's client walk after him.
+    /// </summary>
     public const string Ikv = "ikv";
+
+    /// <summary>A member asks to follow the leader: empty. Answered with lqn 1662, ikv and iln.</summary>
+    public const string Imh = "imh";
+
+    /// <summary>The answer to imh, empty, on root field 3 with the request id.</summary>
+    public const string Iln = "iln";
+
+    /// <summary>A member stopped following: { f1: the member }. Sent to him, between lqn 1661 and inb.</summary>
+    public const string Ika = "ika";
 
     // Los siguientes los nombra Akuma en su tabla y encajan con los que salen sueltos en las
     // capturas, pero NO se han medido campo a campo aqui: no hay ninguna captura donde se expulse
@@ -459,10 +477,10 @@ public static class Op
     /// </summary>
     public const string Ino = "ino";
 
-    /// <summary>Acuse del cliente sobre el grupo. Sin medir.</summary>
+    /// <summary>A member stops following the leader: empty. Answered with lqn 1661, ika and inb.</summary>
     public const string Imo = "imo";
 
-    /// <summary>Acuse del servidor sobre el grupo. Sin medir.</summary>
+    /// <summary>The answer to imo, empty, on root field 3 with the request id.</summary>
     public const string Inb = "inb";
 
     /// <summary>Los detalles de un grupo, respuesta al imd.</summary>
@@ -1185,7 +1203,10 @@ public static class Op
     /// <summary>Sin identificar. 3 usos en el emulador.</summary>
     public const string Kaq = "kaq";
 
-    /// <summary>Sin identificar. 1 uso en el emulador.</summary>
+    /// <summary>
+    /// A fight option's state: { f1: the side, f3: which, f4: on, f5: the fight }. Four at every
+    /// board, in the order 2, 1, 3, 0, and one whenever a side switches one (jzx).
+    /// </summary>
     public const string Kau = "kau";
 
     /// <summary>Sin identificar. 2 usos en el emulador.</summary>
@@ -1332,6 +1353,24 @@ public static class Op
     /// <summary>Kamas put into an exchange: { f1: kamas }.</summary>
     public const string Kee = "kee";
 
+    /// <summary>Client to server: asking another player to trade, { f2: whom }.</summary>
+    public const string Keu = "keu";
+
+    /// <summary>A trade asked for, to both: { f1: who asks, f2: who is asked, f4: 1 }.</summary>
+    public const string Kfz = "kfz";
+
+    /// <summary>
+    /// The trade window opens, to both: { f2: asker's pods capacity, f3: 1, f4: asked's capacity,
+    /// f5: asker's pods carried, f6: asker, f7: asked, f8: asked's carried }.
+    /// </summary>
+    public const string Kbg = "kbg";
+
+    /// <summary>The kamas one side of a trade puts in: { f1: kamas, f3: true when the other one's }.</summary>
+    public const string Ket = "ket";
+
+    /// <summary>A side's pods once a trade is done: { f1: capacity, f2: true when the other one's, f3: carried }.</summary>
+    public const string Keq = "keq";
+
     /// <summary>
     /// A line of the chat log: { f3: kind, f4: parameters }. The payment of a commission writes
     /// { f3: 64, f4: "+", f4: amount } beside lqn 594, "Pago: {0} kamas.".
@@ -1450,6 +1489,59 @@ public static class Op
 
     /// <summary>Presente en 25 de las 31 carpetas de captura (399 mensajes, 90 ficheros). Nada establecido.</summary>
     public const string Kmu = "kmu";
+
+    // ─── A fight on the map, and coming into one (Network/FightJoinProtocol.cs) ──────────
+
+    /// <summary>Server to client: the swords of a fight in its placement appear on the map.</summary>
+    public const string Hpy = "hpy";
+
+    /// <summary>Server to client: the swords go, the placement is over. { f1: the fight }.</summary>
+    public const string Hpr = "hpr";
+
+    /// <summary>Server to client: how many fights the map has. { f2: how many }, empty for none.</summary>
+    public const string Jqz = "jqz";
+
+    /// <summary>Server to client: a member taken off a team shown on the map.</summary>
+    public const string Jzw = "jzw";
+
+    /// <summary>Server to client: a fighter taken off the board during the placement.</summary>
+    public const string Kar = "kar";
+
+    /// <summary>Server to client: a kay turned down, { f1: the fighter named, f2: why }.</summary>
+    public const string Jxs = "jxs";
+
+    /// <summary>
+    /// Client to server: a side's fight option switched, { f1: which } -- none for no spectators,
+    /// 1 party only, 2 closed, 3 asking for help. Answered by kau with its new state.
+    /// </summary>
+    public const string Jzx = "jzx";
+
+    /// <summary>Server to client, empty: out of the fight, sent to whoever leaves the placement.</summary>
+    public const string Jxa = "jxa";
+
+    /// <summary>Client to server, empty: the party window's automatic entry into fights, on.</summary>
+    public const string Ilf = "ilf";
+
+    /// <summary>Server to client, root 3, empty: the answer to ilf.</summary>
+    public const string Ikm = "ikm";
+
+    /// <summary>Client to server, empty: the automatic entry, off.</summary>
+    public const string Int = "int";
+
+    /// <summary>Server to client, root 3, empty: the answer to int.</summary>
+    public const string Ilv = "ilv";
+
+    /// <summary>Client to server, empty: the party window's automatic ready, on.</summary>
+    public const string Ikr = "ikr";
+
+    /// <summary>Server to client, root 3, empty: the answer to ikr.</summary>
+    public const string Inn = "inn";
+
+    /// <summary>Client to server, empty: the automatic ready, off.</summary>
+    public const string Inp = "inp";
+
+    /// <summary>Server to client, root 3, empty: the answer to inp.</summary>
+    public const string Ilr = "ilr";
 
     /// <summary>Llega con jrh en cada carga de mapa y no espera nada de vuelta; el emulador ya lo ignora en silencio. 727 mensajes, 88 ficheros.</summary>
     public const string Kmv = "kmv";

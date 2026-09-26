@@ -183,7 +183,7 @@ Built with **Avalonia**, the same toolkit as the Studio.
 - ✅ Movement, map change and adjacent maps; auto-pilot from the minimap and *travel to*
 <img width="538" height="452" alt="image" src="https://github.com/user-attachments/assets/a6438938-00c2-4a76-b4e1-48abf3d56934" />
 
-- ✅ Seeing others arrive and leave, in all four directions
+- ✅ Seeing others arrive and leave, in all four directions: whoever walks off the map disappears from the others' screens (`kmu`), with the `jsd` before it for their party, as the captures send it
 - ✅ Up to 8 clients at once, each on its own socket-owned session
 - ✅ Everybody is drawn wearing their gear — the other players on the map, the opponent in a fight and every character on the selection screen. Equipment is read per character from `CharacterItems`
 
@@ -234,8 +234,10 @@ Built with **Avalonia**, the same toolkit as the Studio.
 - ✅ Parties — invite, accept, refuse, leave, hand over the lead, kick, and a full member sheet
 - ✅ Lead passes on when the leader leaves; a disconnect removes the member and tells the rest
 - ✅ Friends list
+- ✅ Trading with another player on the map: ask, refuse or accept, lay stacks down and take them back, kamas, ready on both sides, and the goods changing hands — a new stack under a new uid, or onto one of the same — measured on both sides in the two trade captures
 - ✅ Every command answers in the session's own language, from a catalogue in Spanish, English and French. The language comes from the `--langCode` the launcher started the client with
-- ❌ The invitation popup's *Details* button (`imd` → `ilb`), the dedicated member-gone message (`inc`), party search and following the leader
+- ✅ Following the leader: the member's client walks after him map by map on each `ikv` the server sends it, as the follow capture measures; a zaap cuts the follow, as on the real server
+- ❌ The invitation popup's *Details* button (`imd` → `ilb`), the dedicated member-gone message (`inc`) and party search
 
 ### ⚜️ Guilds and raids
 
@@ -511,6 +513,10 @@ Three architecture tests enforce it: no lookups that assume one team is the play
 - ✅ Monster AI that plans its turn: every spell it can pay for, against every target, from every cell its MP reach — the blow against the target's resistance, kills first and the weakest enemy focused, heals for the badly wounded, AP/MP removal, buffs and summons once a turn; cooldowns, casts per turn and per target honoured; then it places itself (ranged at its reach, melee against the weakest to lock him, fleeing when nearly dead)
 - 🟡 Weapon strikes apply damage and AP cost; the slash animation does not
 - ✅ Push and collision damage, `blockedCells × (level/2 + push − resistance + 32) / 4`, floored. The fighter acting as the wall takes half, and the **Unmovable** state cancels it
+- ✅ Joining someone else's fight in its placement: the swords on the map, a click on them (`kay`), or a party member pulled in behind the leader with *automatic entry*, and *automatic ready*; a dungeon's monster side grows with each player to the first `clamp(players, 4, 8)` of the room's eight
+- ✅ A party opens its fights kept to the party, as the real server does, and the side's leader switches the options from the fight window — no spectators, party only, closed, asking for help (`jzx` → `kau`); an outsider knocking on a party-only side is turned down (`jxs` 16)
+- ✅ A won fight is shared: the experience with the game's group bonus, each player's part by level up to two and a half times the strongest monster's; the kamas by prospecting; the items rolled for each player; and every end screen lists everybody's gains, as the follow capture shows. A player alone gets what he always got
+- 🟡 Wisdom, the experience given to a mount or a guild and account bonuses are not modelled, alone or in a group; refusals other than a party-only side are not answered
 - ✅ A dropped client does not stop the fight, and the player can come back into it — see
   [Connection and authentication](#-connection-and-authentication)
 - ❌ Lock and tackle in melee
@@ -1579,7 +1585,6 @@ to a number of turns (1045), a spell's own basic-healing bonus (2935), maximised
 ### ❌ Not implemented at all
 
 - Achievements
-- Party fights
 
 ---
 
@@ -1655,7 +1660,7 @@ The full plan is in **`docs/world-editor.md`**.
 
 ## 🧪 Tests
 
-`Jondo.Unity.Tests` — **1,431 xUnit tests**, grouped by domain: `Auth`, `Combat`, `Commands`,
+`Jondo.Unity.Tests` — **1,491 xUnit tests**, grouped by domain: `Auth`, `Combat`, `Commands`,
 `Content`, `Diagnostics`, `Economy`, `Launcher`, `Movement`, `Network`, `Protocol`, `Quests`,
 `Security`, `Sessions`, `Sprites`, `Studio`, `World`. They run in about half a minute.
 

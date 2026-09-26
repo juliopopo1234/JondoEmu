@@ -114,9 +114,12 @@ limpiarla.
 **Cualquier respuesta al guardián entra**, porque el árbol de diálogo de esos NPCs no está escrito.
 La frase de confirmación existe y es suya; ponerla es trabajo del editor.
 
-**El grupo no crece durante la colocación.** En el juego, si entran más jugadores al combate el grupo
-pasa de cuatro a su tamaño; aquí nadie puede unirse todavía a un combate contra monstruos, así que
-todo combate es de uno contra cuatro. El grupo del mapa ya lleva sus alternativas para cuando se pueda.
+**El grupo crece durante la colocación**, como en el juego. Cada vez que alguien entra al combate de
+una sala, el bando de los monstruos se rehace entero con los primeros `clamp(jugadores, 4, 8)` de sus
+ocho y con ids nuevos, aunque el número no cambie: es lo que enseña `Busqueda grupo/busqueda
+automatica de grupo...`, cuatro jugadores entrando uno a uno al combate 471, con los -1..-4 quitados
+(jzw) y los -5..-8 puestos (kae) a la segunda llegada, y así hasta los -13..-16. Ver
+`Handlers/FightJoin.cs` y `docs/fight.md`.
 
 ---
 
@@ -135,7 +138,6 @@ Ahora van en el orden correcto.
 - **Los pasajes internos.** Es lo que separa esto de la mazmorra de verdad. Son ~1.800 puertas y el
   editor de pasajes ya sabe ponerlas; lo que no hay es de dónde sacarlas automáticamente.
 - **El árbol de diálogo del guardián**, con la confirmación y un «no, gracias» que no entre.
-- **Unirse a un combate contra monstruos**, y con ello que el grupo de la sala crezca hasta ocho.
 - **Las oleadas** de algunas mazmorras nuevas (Despedazadora, Venerable, Bzupervibzor) y el altar de caza.
 - **Los retos de mazmorra**: 684 de los 842 están marcados `solo_mazmorra` y no se ofrecen nunca,
   porque nada le dice al combate que está dentro de una. Ahora `DungeonHandler.IsBossRoom` y

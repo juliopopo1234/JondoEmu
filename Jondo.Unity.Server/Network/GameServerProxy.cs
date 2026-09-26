@@ -158,10 +158,8 @@ namespace Jondo.Unity.Server.Network
                 {
                     try
                     {
-                        await SessionRegistry.BroadcastToMapAsync(
-                            session.MapId,
-                            ConnectionProtocol.BuildActorLeft(session.CharacterId),
-                            session.Id);
+                        await SessionRegistry.RemoveFromMapAsync(
+                            session.MapId, session.CharacterId, session.Id);
                     }
                     catch { }
 

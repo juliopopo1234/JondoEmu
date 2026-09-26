@@ -162,6 +162,48 @@ ids (12736, which also appears in `jyy`) and small numbers (370, 373), so it is
 *not* the initiative list, whatever it is. The turn order has not been located
 yet.
 
+## Coming into somebody else's fight
+
+Measured in `Combate/meterse en combate de otra persona haciendo click en la espadita...` (a
+click on the swords), `Combate/entrar a combate con listo automatico y entrada automatica
+siguiendo a lider de grupo...` (a party member pulled in behind his leader),
+`Busqueda grupo/busqueda automatica de grupo...` (four players into one dungeon fight) and
+`Mazmorras/mazmorra de los jalatós completa` (a refused one). Builders in
+`Network/FightJoinProtocol.cs`, logic in `Handlers/FightJoin.cs` and `FightInstance.JoinTeam`.
+
+What the map sees when somebody attacks a group (follow capture 131-141):
+
+```
+S→C  kmu { f2: the group }  kmu { f2: the attacker }     both go off the map (no jsd)
+S→C  hpy { f1: flags [attacker cell, group cell], f2: 4, team, team, options x2, f6: fight }
+S→C  jqz { f2: fights on this map }
+S→C  kae { team 0 with its people }  kae { team 1, empty }  kae { team 1 +1 monster } x N
+```
+
+A jss of a map with fights carries each one in placement as an f12 (the hpy's body) and is
+followed by a jqz. When the placement ends the swords go with `hpr { f1: fight }`; the jqz drops
+when the fight is over.
+
+Coming in: `C→S kay { f1: a fighter of the side, f2: fight }`, or nothing at all when the server
+pulls a party member in (he has the automatic entry on, stands on the map, and his leader opens
+the fight; if he is walking, when his walk ends). Then `kml kmp(1) jru lqu kuq lva` to him, and to
+the whole fight `kmk {his enemies, him}`, `kae {his side}`, `kxa kwk`, `jxg {him}`, `jzu`. His
+board is the ordinary one, with the kam naming who opened the fight and the kaa what is LEFT of
+the placement (442 at 0.7 s). Every board carries one kae: the receiver's own side, empty.
+
+In a dungeon every arrival rebuilds the monster side (`kar`, `kmu`, `jzw` per monster gone; `kmk`
+x2, `jxg`, `jzu` per monster come) to the first clamp(people, 4, 8) of the room's eight.
+
+The party window's two switches are server-side, each answered on root 3 with an empty message:
+`ilf → ikm` / `int → ilv` automatic entry on / off, `ikr → inn` / `inp → ilr` automatic ready
+on / off (which pair is which is read off the clock of the capture). With the automatic ready on,
+a member is ready when his leader presses ready: both kah leave together.
+
+Leaving from the placement (`kme`): `jxa`, then `kml kmp ktz jru lqu` as at a fight's end.
+
+Refusals: only `jxs { f1, f2: 16 }` is measured, for a side restricted to its party. The other
+reasons (started, full) are not answered at all rather than invented.
+
 ## What the builders reproduce
 
 `Network/FightProtocol.cs` builds `kba`, `jzu`, `jrk`, `kmk` and `kah`, and reads

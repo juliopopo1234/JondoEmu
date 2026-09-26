@@ -883,38 +883,11 @@ namespace Jondo.Unity.Server.Network
             {
                 if (group.Members.Count == 0) continue;
 
-                var creatures = Pb.New();
-                for (int i = 1; i < group.Members.Count; i++)
-                {
-                    var member = group.Members[i];
-                    creatures.Msg(1, Pb.New()
-                        .Var(1, member.Monster.Id)
-                        .VarIfNotZero(2, LevelOf(member))
-                        .Msg(3, Pb.New()
-                            .Var(2, LookKind)
-                            .VarIfNotZero(3, BonesOf(member.Monster.Look)))
-                        .VarIfNotZero(4, GradeOf(member)));
-                }
+                // A group being fought went off the map with a kmu when its fight opened (the
+                // follow capture, frame 132): it is not drawn for whoever comes now either.
+                if (Handlers.FightHandler.IsGroupFighting(group.MobId)) continue;
 
-                var leader = group.Members[0];
-                creatures.Msg(2, Pb.New()
-                    .Var(1, leader.Monster.Id)
-                    .VarIfNotZero(2, LevelOf(leader))
-                    .VarIfNotZero(4, GradeOf(leader)));
-
-                if (group.Modular) AddAlternatives(creatures, group.Members);
-
-                jss.Msg(5, Pb.New()
-                    .Msg(1, Pb.New().Var(1, group.CellId).Var(2, group.Orientation))
-                    .Msg(2, Pb.New()
-                        .Msg(1, Pb.New().Msg(4, Pb.New()
-                            .Var(1, 1)
-                            .Msg(2, creatures)
-                            .Var(5, -1)))
-                        .Msg(3, Pb.New()
-                            .Var(2, LookKind)
-                            .VarIfNotZero(3, BonesOf(leader.Monster.Look))))
-                    .Var(3, group.MobId));
+                jss.Msg(5, MonsterGroupActor(group));
             }
 
             AddNpcs(jss, mapId);
@@ -925,7 +898,55 @@ namespace Jondo.Unity.Server.Network
 
             AddInteractiveElements(jss, mapId);
 
+            // And last, the fights in their placement: the swords. Each f12 is what an hpy carries
+            // (the sword capture's jss at frame 53, the jalatós one at 840); a fight past its
+            // placement has none -- it is only counted, by the jqz that follows the jss.
+            foreach (var fight in Handlers.FightHandler.PlacementFightsOnMap(mapId))
+            {
+                jss.Msg(12, Handlers.FightHandler.MapEntryOf(fight));
+            }
+
             return jss.Build();
+        }
+
+        /// <summary>
+        /// A monster group as an actor of the map: its entry in the jss, and what a jsn carries
+        /// to draw it again (the follow capture's frame 131 is this same block).
+        /// </summary>
+        internal static Pb MonsterGroupActor(Managers.MobSpawnManager.MobGroup group)
+        {
+            var creatures = Pb.New();
+            for (int i = 1; i < group.Members.Count; i++)
+            {
+                var member = group.Members[i];
+                creatures.Msg(1, Pb.New()
+                    .Var(1, member.Monster.Id)
+                    .VarIfNotZero(2, LevelOf(member))
+                    .Msg(3, Pb.New()
+                        .Var(2, LookKind)
+                        .VarIfNotZero(3, BonesOf(member.Monster.Look)))
+                    .VarIfNotZero(4, GradeOf(member)));
+            }
+
+            var leader = group.Members[0];
+            creatures.Msg(2, Pb.New()
+                .Var(1, leader.Monster.Id)
+                .VarIfNotZero(2, LevelOf(leader))
+                .VarIfNotZero(4, GradeOf(leader)));
+
+            if (group.Modular) AddAlternatives(creatures, group.Members);
+
+            return Pb.New()
+                .Msg(1, Pb.New().Var(1, group.CellId).Var(2, group.Orientation))
+                .Msg(2, Pb.New()
+                    .Msg(1, Pb.New().Msg(4, Pb.New()
+                        .Var(1, 1)
+                        .Msg(2, creatures)
+                        .Var(5, -1)))
+                    .Msg(3, Pb.New()
+                        .Var(2, LookKind)
+                        .VarIfNotZero(3, BonesOf(leader.Monster.Look))))
+                .Var(3, group.MobId);
         }
 
         /// <summary>
@@ -2158,17 +2179,36 @@ namespace Jondo.Unity.Server.Network
         /// muñeco andando hacia ese lado y entonces lo borra.
         ///
         ///   10 a282f0a6c408 18 06     quién, y se fue por arriba
-        ///   10 a282f0a6c408           quién, y ya está
-        ///
-        /// Los que van sin dirección son las salidas que no tienen ninguna: por el zaap uno no se
-        /// va hacia ningún lado, desaparece. Por eso es opcional.
+        ///   10 a282f0a6c408           who, and he left to the east (0, off the wire)
         /// </summary>
+        /// <remarks>
+        /// The one without f3 is direction 0, east, which proto3 leaves off the wire; it is not an
+        /// exit with no direction. Frame 5 of that capture is the leader walking from [1,-32] to
+        /// [2,-32], and the member's own jsd of frame 19 is the same walk. So a 0 is written the
+        /// same way here, and a jump -- which has no way out at all -- sends no jsd: see
+        /// <see cref="SessionRegistry.LeaveNotices"/>.
+        /// </remarks>
         public static byte[] BuildActorLeft(long contextualId, int? porDonde = null)
         {
             var pb = Pb.New().Var(2, contextualId);
-            if (porDonde.HasValue) pb.Var(3, porDonde.Value);
+            if (porDonde.HasValue) pb.VarIfNotZero(3, porDonde.Value);
             return Push(Op.Jsd, pb.Build());
         }
+
+        /// <summary>
+        /// Takes an actor off the map in the client of someone watching (kmu): only who.
+        /// </summary>
+        /// <remarks>
+        /// This, and not the jsd, is what makes a character who left disappear from the others'
+        /// screens. In "Movimiento/captura otro personaje saliendo del mapa" two characters walk
+        /// off the observer's map, and each time the server sends their jsj to the edge and then
+        /// kmu { f2: their id } -- no jsd at all. The jsd goes to the one leaving, before his jru,
+        /// and to his party: in "Grupos/con grupo seguir desplazamiento del lider..." the member
+        /// watching gets the leader's jsd and, right behind it, the same kmu. With the jsd alone
+        /// the character walked to the edge on the others' screens and stayed there.
+        /// </remarks>
+        public static byte[] BuildActorRemoved(long contextualId)
+            => Push(Op.Kmu, Pb.New().Var(2, contextualId).Build());
 
         /// <summary>"Load this map" (jru).</summary>
         public static byte[] BuildLoadMap(long mapId)

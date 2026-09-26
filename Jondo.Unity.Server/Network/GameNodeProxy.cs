@@ -109,10 +109,8 @@ namespace Jondo.Unity.Server.Network
                         {
                             try
                             {
-                                await SessionRegistry.BroadcastToMapAsync(
-                                    sesion.MapId,
-                                    ConnectionProtocol.BuildActorLeft(sesion.CharacterId),
-                                    sesion.Id);
+                                await SessionRegistry.RemoveFromMapAsync(
+                                    sesion.MapId, sesion.CharacterId, sesion.Id);
                             }
                             catch { }
                             sesion.LeaveWorld();
@@ -120,6 +118,7 @@ namespace Jondo.Unity.Server.Network
 
                         // A commission half done ends for the one left behind too.
                         try { await CommissionHandler.AbandonAsync(sesion); } catch { }
+                        try { await TradeHandler.AbandonAsync(sesion); } catch { }
                         try { await ArtisanHandler.LeftAsync(sesion); } catch { }
 
                         // Guardar al cerrar, que no se hacía en ninguna parte: hasta ahora el
@@ -259,9 +258,8 @@ namespace Jondo.Unity.Server.Network
                     }
                     if (SessionContext.Current.IsInWorld)
                     {
-                        await SessionRegistry.BroadcastToMapAsync(
-                            SessionContext.State.MapId,
-                            ConnectionProtocol.BuildActorLeft(SessionContext.State.CharacterId),
+                        await SessionRegistry.RemoveFromMapAsync(
+                            SessionContext.State.MapId, SessionContext.State.CharacterId,
                             SessionContext.Current.Id);
                         SessionContext.Current.LeaveWorld();
                     }
@@ -473,6 +471,9 @@ namespace Jondo.Unity.Server.Network
                                                               sessionAccountId));
                         await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream, actors);
 
+                        // How many fights the map has, right behind its actors when it has any.
+                        await FightHandler.SendFightCountAsync(stream, GameState.MapId);
+
                         // And straight behind it, the mark that says there are no more actors. In
                         // every capture that loads a map lva comes immediately after jss, and
                         // without it the client never counts the map as loaded: two seconds later
@@ -540,6 +541,10 @@ namespace Jondo.Unity.Server.Network
                 else if (payloadStr.Contains("type.ankama.com/jqi"))
                 {
                     await WorldMoveHandler.AllowMapExitAsync(stream, payload);
+
+                    // A party member whose leader opened a fight while he was walking goes in
+                    // when his walk ends, as the follow capture does.
+                    await FightHandler.AfterWalkAsync(stream);
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Jqk)))
                 {
@@ -630,6 +635,15 @@ namespace Jondo.Unity.Server.Network
                 else if (payloadStr.Contains(Op.Uri(Op.Ima)))
                 {
                     await Handlers.PartyHandler.PromoteAsync(stream, payload);
+                }
+                // Following the party leader: see Handlers.PartyFollowHandler.
+                else if (payloadStr.Contains(Op.Uri(Op.Imh)))
+                {
+                    await Handlers.PartyFollowHandler.FollowAsync(stream, payload);
+                }
+                else if (payloadStr.Contains(Op.Uri(Op.Imo)))
+                {
+                    await Handlers.PartyFollowHandler.UnfollowAsync(stream, payload);
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Ktb)))
                 {
@@ -814,6 +828,7 @@ namespace Jondo.Unity.Server.Network
                     // Mover un objeto entre la bolsa y el cofre. The same kcr lays a stack on a
                     // commission's offer, on a workshop's bench, or on a magus table.
                     if (!await CommissionHandler.OfferAsync(stream, payload)
+                        && !await TradeHandler.MoveAsync(stream, payload)
                         && !await WorkshopHandler.MoveAsync(stream, payload))
                         await ChestHandler.MoveAsync(stream, payload);
                 }
@@ -830,7 +845,8 @@ namespace Jondo.Unity.Server.Network
                 else if (payloadStr.Contains(Op.Uri(Op.Kep)))
                 {
                     // Ready: a commission's customer, or in a workshop the craft button.
-                    if (!await CommissionHandler.ReadyAsync(stream, payload))
+                    if (!await CommissionHandler.ReadyAsync(stream, payload)
+                        && !await TradeHandler.ReadyAsync(stream, payload))
                         await WorkshopHandler.CraftAsync(stream, payload);
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Kcj)))
@@ -850,8 +866,8 @@ namespace Jondo.Unity.Server.Network
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Kgi)))
                 {
-                    // Accepting it.
-                    await CommissionHandler.AcceptAsync(stream);
+                    // Accepting it, or a trade.
+                    if (!await CommissionHandler.AcceptAsync(stream)) await TradeHandler.AcceptAsync();
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Kgd)))
                 {
@@ -875,8 +891,19 @@ namespace Jondo.Unity.Server.Network
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Kee)))
                 {
-                    // Kamas in an exchange: a commission's payment.
-                    await CommissionHandler.PaymentAsync(stream, payload);
+                    // Kamas in an exchange: a commission's payment, or a trade's.
+                    if (!await CommissionHandler.PaymentAsync(stream, payload))
+                        await TradeHandler.KamasAsync(stream, payload);
+                }
+                else if (payloadStr.Contains(Op.Uri(Op.Jzx)))
+                {
+                    // A side's fight option switched: no spectators, party only, closed, help.
+                    await FightHandler.FightOptionAsync(stream, payload);
+                }
+                else if (payloadStr.Contains(Op.Uri(Op.Keu)))
+                {
+                    // Asking another player to trade.
+                    await TradeHandler.RequestAsync(stream, payload);
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Itr)))
                 {
@@ -954,6 +981,7 @@ namespace Jondo.Unity.Server.Network
                     // propia: con la conversación abierta, cualquier orden que deje el zaap antes
                     // se queda con la X que era del diálogo.
                     if (await CommissionHandler.CloseAsync()) { }
+                    else if (await TradeHandler.CloseAsync()) { }
                     else if (WorkshopHandler.IsOpen) await WorkshopHandler.CloseAsync(stream);
                     else if (ChestHandler.IsOpen) await ChestHandler.CloseAsync(stream);
                     else if (NpcHandler.IsShopOpen) await NpcHandler.CloseShopAsync(stream);
@@ -1209,6 +1237,17 @@ namespace Jondo.Unity.Server.Network
                     // Atacar a un grupo de monstruos. Es lo que manda el cliente de verdad al
                     // lanzar un combate: lleva el id contextual del grupo.
                     await FightHandler.AttackAsync(stream, payload);
+                }
+                else if (payloadStr.Contains(Op.Uri(Op.Kay)))
+                {
+                    // Into somebody else's fight during its placement: the swords on the map or
+                    // the party window.
+                    await FightHandler.JoinRequestAsync(stream, payload);
+                }
+                else if (FightHandler.IsAutoOptionRequest(payloadStr))
+                {
+                    // The party window's automatic entry and automatic ready.
+                    await FightHandler.AutoOptionAsync(stream, payload, payloadStr);
                 }
                 else if (payloadStr.Contains(Op.Uri(Op.Jzy)) || payloadStr.Contains(Op.Uri(Op.Kaq))
                          || payloadStr.Contains("type.ankama.com/jwz") || payloadStr.Contains("type.ankama.com/jxy")

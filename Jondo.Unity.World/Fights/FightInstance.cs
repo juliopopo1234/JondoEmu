@@ -580,6 +580,190 @@ namespace Jondo.Unity.World.Fights
             return false;
         }
 
+        // ═══════════════════════════════════════════════════════════════════
+        //  Somebody joins during the placement
+        // ═══════════════════════════════════════════════════════════════════
+        //
+        // Measured in «Combate/meterse en combate de otra persona haciendo click en la espadita»
+        // (a player clicks the swords of a fight on the map), «Combate/entrar a combate con listo
+        // automatico y entrada automatica siguiendo a lider de grupo» (a party member pulled in
+        // behind his leader) and «Busqueda grupo/busqueda automatica de grupo...» (four players
+        // into one dungeon fight, the monster side rebuilt at every arrival). What travels is in
+        // Network/FightJoinProtocol.cs; this is only who fits where.
+
+        /// <summary>When the placement opened: what the kaa of a late joiner counts down from.</summary>
+        public DateTime PlacementOpenedUtc { get; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// What is left of a placement of <paramref name="totalDeciseconds"/>, in tenths, never
+        /// below zero. Measured: the follower's kaa said 442 at 0.7 s into a 450 placement, the
+        /// fourth player of the dungeon fight 403 at 4.6 s.
+        /// </summary>
+        public int PlacementDecisecondsLeft(int totalDeciseconds, DateTime nowUtc)
+        {
+            long gone = (long)(nowUtc - PlacementOpenedUtc).TotalMilliseconds / 100;
+            return (int)Math.Max(0, totalDeciseconds - gone);
+        }
+
+        /// <summary>Why somebody cannot come into this fight.</summary>
+        // ─── Options: who may come in, and who may watch ──────────────────────────────
+
+        /// <summary>No spectators: jzx with no option, kau { f4: 1 } with no f3.</summary>
+        public const int OptionSecret = 0;
+
+        /// <summary>Only the side's party: kau { f3: 1 }, on by itself when a party opens it.</summary>
+        public const int OptionPartyOnly = 1;
+
+        /// <summary>Nobody else: jzx { f1: 2 }, with lqn 95.</summary>
+        public const int OptionClosed = 2;
+
+        /// <summary>Asking for help: jzx { f1: 3 }.</summary>
+        public const int OptionHelp = 3;
+
+        private readonly bool[,] _options = new bool[2, 4];
+
+        /// <summary>Whether a side has an option on.</summary>
+        public bool OptionOn(int team, int option)
+        {
+            if (team is < 0 or > 1 || option is < 0 or > 3) return false;
+            lock (_options) return _options[team, option];
+        }
+
+        /// <summary>Turns a side's option on or off.</summary>
+        public void SetOption(int team, int option, bool on)
+        {
+            if (team is < 0 or > 1 || option is < 0 or > 3) return;
+            lock (_options) _options[team, option] = on;
+        }
+
+        public enum JoinRefusal
+        {
+            None,
+
+            /// <summary>The side is closed: nobody else comes in.</summary>
+            Closed,
+
+            /// <summary>The placement is over: the swords are gone from the map (hpr).</summary>
+            NotInPlacement,
+
+            /// <summary>The team asked for is not one of the two.</summary>
+            NoSuchTeam,
+
+            /// <summary>A person does not join the monsters' side.</summary>
+            MonsterTeam,
+
+            /// <summary>No room: as many people as a team takes, or no free placement cell.</summary>
+            TeamFull,
+        }
+
+        /// <summary>The people of a side, summons and monsters left out.</summary>
+        public int PeopleIn(int team) => Bando(team).Count(f => !f.IsMonster && !f.EsInvocado);
+
+        /// <summary>
+        /// Whether one more person fits in <paramref name="team"/>. The cap is the caller's: it is
+        /// not a property of the fight but of the game (eight, see FightJoin).
+        /// </summary>
+        public JoinRefusal CanJoin(int team, int maxPeoplePerTeam)
+        {
+            if (State != FightState.Placement) return JoinRefusal.NotInPlacement;
+            if (team != Azules && team != Rojos) return JoinRefusal.NoSuchTeam;
+            if (Bando(team).Exists(f => f.IsMonster && !f.EsInvocado)) return JoinRefusal.MonsterTeam;
+            if (OptionOn(team, OptionClosed)) return JoinRefusal.Closed;
+            if (PeopleIn(team) >= maxPeoplePerTeam) return JoinRefusal.TeamFull;
+            if (FreePlacementCell(team) < 0) return JoinRefusal.TeamFull;
+            return JoinRefusal.None;
+        }
+
+        /// <summary>
+        /// The first placement cell of that side nobody stands on, or -1.
+        /// </summary>
+        /// <remarks>
+        /// In the order of the kba, which is the order the real server fills: the joiner of the
+        /// sword capture landed on 216, the first red cell, next to the leader on 260, the second.
+        /// <see cref="AddPlayer"/> picks by index instead, which is right only while nobody has
+        /// moved.
+        /// </remarks>
+        public int FreePlacementCell(int team)
+        {
+            foreach (int cell in CasillasDe(team))
+            {
+                if (!Todos.Any(f => f.IsAlive && f.CellId == cell)) return cell;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Puts a person who joins into <paramref name="team"/>, on its first free cell. False,
+        /// and nothing changed, when <see cref="CanJoin"/> says no.
+        /// </summary>
+        public bool JoinTeam(Fighter person, int team, int maxPeoplePerTeam)
+        {
+            if (person == null || CanJoin(team, maxPeoplePerTeam) != JoinRefusal.None) return false;
+
+            person.TeamId = team;
+            person.CellId = FreePlacementCell(team);
+            Bando(team).Add(person);
+            UpdateTurnOrder();
+            return true;
+        }
+
+        /// <summary>
+        /// Takes a person out during the placement: he leaves, the fight goes on without him.
+        /// </summary>
+        public bool LeavePlacement(long fighterId)
+        {
+            if (State != FightState.Placement) return false;
+            var who = Buscar(fighterId);
+            if (who == null || who.IsMonster) return false;
+
+            Azul.Remove(who);
+            Rojo.Remove(who);
+            ForgetPreparation(fighterId);
+            DeDondeVenian.Remove(fighterId);
+            UpdateTurnOrder();
+            return true;
+        }
+
+        /// <summary>
+        /// The monster side rebuilt from scratch: every monster that is not a summon goes, and
+        /// <paramref name="count"/> new ones come, built by <paramref name="build"/> from their
+        /// position in the group, their id and their cell.
+        /// </summary>
+        /// <remarks>
+        /// What the dungeon capture shows at every arrival, even when the number does not change:
+        /// with two players the -1..-4 are taken off (jzw) and -5..-8 put on (kae), with three
+        /// -5..-8 give way to -9..-12, with four -9..-12 to -13..-16. So the new ids carry on
+        /// below the old ones -- which is why they are drawn before anything is removed -- and
+        /// the cells are the red ones in order, the same four (487, 444, 485, 486) every time.
+        /// </remarks>
+        public (List<Fighter> Removed, List<Fighter> Added) ReplaceMonsters(
+            int count, Func<int, long, int, Fighter> build)
+        {
+            var added = new List<Fighter>();
+            if (State != FightState.Placement || build == null) return (new List<Fighter>(), added);
+
+            var removed = Rojo.Where(f => f.IsMonster && !f.EsInvocado).ToList();
+            long firstId = SiguienteIdDeInvocado();
+            foreach (var gone in removed) Rojo.Remove(gone);
+
+            for (int i = 0; i < count; i++)
+            {
+                int cell = RedPlacementCells.Count > 0
+                    ? RedPlacementCells[i % RedPlacementCells.Count]
+                    : 0;
+                var monster = build(i, firstId - i, cell);
+                if (monster == null) continue;
+                monster.Id = firstId - i;
+                monster.TeamId = Rojos;
+                monster.CellId = cell;
+                Rojo.Add(monster);
+                added.Add(monster);
+            }
+
+            UpdateTurnOrder();
+            return (removed, added);
+        }
+
         /// <summary>Se recoloca durante la fase de colocación, cada uno en las casillas de su lado.</summary>
         public void ChangePlacementCell(long fighterId, int newCellId)
         {
@@ -591,6 +775,9 @@ namespace Jondo.Unity.World.Fights
             var f = Buscar(fighterId);
             if (f != null && CasillasDe(suyo).Contains(newCellId))
             {
+                // Nobody on top of anybody. With one person per side this could not happen; with
+                // a party on one side it can, and two fighters on one cell is one target for two.
+                if (Todos.Any(o => o != f && o.IsAlive && o.CellId == newCellId)) return;
                 f.CellId = newCellId;
             }
         }

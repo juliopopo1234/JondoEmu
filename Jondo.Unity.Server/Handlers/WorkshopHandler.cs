@@ -172,12 +172,13 @@ namespace Jondo.Unity.Server.Handlers
             await SendAsync(stream, Op.Hlm, Array.Empty<byte>());
         }
 
-        /// <summary>Nothing open survives a map change; a commission ends for both.</summary>
+        /// <summary>Nothing open survives a map change; a commission or a trade ends for both.</summary>
         public static void Forget()
         {
             var session = SessionContext.Current;
             session.State.Workshop = null;
             if (session.State.Commission != null) _ = CommissionHandler.AbandonAsync(session);
+            if (session.State.Trade != null) _ = TradeHandler.AbandonAsync(session);
         }
 
         /// <summary>itr: the client wants its inventory again. ivx and an empty hlm, twelve of twelve.</summary>

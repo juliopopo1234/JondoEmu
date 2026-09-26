@@ -40,6 +40,18 @@ namespace Jondo.Unity.Tests.Combat
 
         private const string ElMotor = "Jondo.Unity.Server/Handlers/FightHandler.cs";
 
+        /// <summary>
+        /// The engine is one class in two files since joining a fight got its own: the same rules
+        /// read both, or the second one is a way round them.
+        /// </summary>
+        private static readonly string[] ElMotorEntero =
+        {
+            ElMotor,
+            "Jondo.Unity.Server/Handlers/FightJoin.cs",
+        };
+
+        private static string Motor() => string.Join("\n", ElMotorEntero.Select(Fuente));
+
         // ═══════════════════════════════════════════════════════════════════
         //  Regla 1: nadie busca a alguien en un solo bando
         // ═══════════════════════════════════════════════════════════════════
@@ -55,7 +67,7 @@ namespace Jondo.Unity.Tests.Combat
             // para los suyos y los otros, Aliados(id) y Enemigos(id).
             var prohibido = new Regex(@"\.(Azul|Rojo)\.(Find|Exists|FirstOrDefault|Any|All)\b");
 
-            var culpables = Culpables(Fuente(ElMotor), linea => prohibido.IsMatch(linea));
+            var culpables = Culpables(Motor(), linea => prohibido.IsMatch(linea));
 
             Assert.True(culpables.Count == 0,
                 "Búsquedas en un solo bando:" + Environment.NewLine + string.Join(Environment.NewLine, culpables));
@@ -86,7 +98,7 @@ namespace Jondo.Unity.Tests.Combat
             // persona, y para eso está ACadaUnoAsync -- o un ayudante como FichaATodosAsync.
             var malas = new List<string>();
 
-            foreach (var (numero, llamada) in Difusiones(Fuente(ElMotor)))
+            foreach (var (numero, llamada) in Difusiones(Motor()))
             {
                 if (!llamada.Contains("GameState")) continue;
                 if (Permitidas.Any(llamada.Contains)) continue;
@@ -125,6 +137,10 @@ namespace Jondo.Unity.Tests.Combat
             "SendPlacementTurnStart", "SendPlacementPositionsList",
             "RefreshPlayerSpellBarAsync", "AttackAsync",
             "HandleFightOptionToggleRequest", "AnnounceAppearanceAsync",
+            // FightJoin.cs: the jqz behind the jss of the one loading a map, the answer to the
+            // party window's switch of the one who clicked it, and the way back of the one who
+            // leaves the placement -- all three are one person's own view.
+            "SendFightCountAsync", "AutoOptionAsync", "LeavePlacementAsync",
         };
 
         [Fact]
@@ -135,7 +151,7 @@ namespace Jondo.Unity.Tests.Combat
             // mano dentro del motor, el próximo método nuevo se la salta sin querer -- que es
             // exactamente lo que pasó con el «listo», con el arranque y con el final del combate.
             var metodo = new Regex(@"^\s*(?:private|public|internal).*\sTask[<\w>]*\s+(\w+)\s*\(");
-            var lineas = Fuente(ElMotor).Split('\n');
+            var lineas = Motor().Split('\n');
 
             string actual = "";
             var malos = new List<string>();

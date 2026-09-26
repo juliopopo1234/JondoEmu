@@ -17,7 +17,7 @@ using Jondo.Unity.Protocol;
 
 namespace Jondo.Unity.Server.Handlers
 {
-    public static class FightHandler
+    public static partial class FightHandler
     {
         private static ConcurrentDictionary<long, FightInstance> _activeFights = new ConcurrentDictionary<long, FightInstance>();
         private static long _nextFightId = 1000;
@@ -41,6 +41,14 @@ namespace Jondo.Unity.Server.Handlers
         /// </summary>
         public static async Task InitiateFightFromMobCollision(NetworkStream stream, MobSpawnManager.MobGroup mobGroup, long mapId, long mobContextId = 0)
         {
+            // A group already being fought went off the map with a kmu: it is nobody's to attack
+            // a second time. Its fight is joined by its swords (kay), not by clicking the group.
+            if (IsGroupFighting(mobGroup.MobId))
+            {
+                Program.LogDebug($"[Fight] Group {mobGroup.MobId} is already being fought; no second fight.");
+                return;
+            }
+
             // Si a este jugador le quedaba un combate colgado de antes, se le quita el suyo y sólo
             // el suyo. Aquí había un _activeFights.Clear(): empezar una pelea borraba las de TODOS
             // los demás jugadores del servidor. El final normal de un combate ya lo quita solo
@@ -147,20 +155,13 @@ namespace Jondo.Unity.Server.Handlers
 
             // De dónde se salió, para poder volver. El mapa de combate es de instancia y no vale
             // como sitio donde dejar al personaje.
-            // NOT announced to the roleplay map, and that is a decision rather than an omission.
+            // NOT announced to the roleplay map with a jsd, and that is measured now.
             //
-            // The review asked for AnunciarMudanzaAsync at both fight boundaries, on the grounds
-            // that changing MapId without telling the old map leaves a ghost behind. True for zaaps
-            // and doors. Here it is very likely wrong: in Dofus the fighters stay drawn on the map
-            // they are fighting on, as a group other players can walk up to and join, so sending
-            // "this actor left" would erase from everybody's screen the one thing they need to see
-            // to join in.
-            //
-            // Not fixed either way, because the captures cannot settle it: every combat capture is
-            // one client's own stream, and what a BYSTANDER receives when somebody beside them
-            // starts a fight is not in any of them. Guessing at a broadcast and shipping it would
-            // be worse than the ghost. What would settle it: two clients on one map, one starts a
-            // fight, capture the other one.
+            // What a bystander receives when somebody beside him starts a fight is in «entrar a
+            // combate con listo automatico y entrada automatica siguiendo a lider de grupo»,
+            // frames 131-141: no jsd, but a kmu for the group and one for the attacker, then the
+            // swords (hpy), the count of fights on the map (jqz) and the teams (kae). Sent by
+            // AfterFightOpenedAsync below; see FightJoin.cs.
             var suyo = Network.SessionContext.State;
             suyo.FightId = fight.FightId;
             suyo.RoleplayMapId = fight.RoleplayMapId;
@@ -190,6 +191,10 @@ namespace Jondo.Unity.Server.Handlers
             // y CancelPlacementTimer() se llama desde cuatro sitios, pero NADIE lo asignaba nunca:
             // se cancelaba un null. Ésa era la mitad que faltaba.
             StartPlacementCountdown(stream, fight, fight.Reglas.RelojDeColocacion * 100);
+
+            // And now the rest of the world: his side and theirs before his board, the swords for
+            // the map, the ilh for his party and the members who follow him in. See FightJoin.cs.
+            await AfterFightOpenedAsync(fight, mobGroup, casillaDeRol);
         }
 
         /// <summary>Arranca el plazo de colocación de un combate.</summary>
@@ -222,12 +227,17 @@ namespace Jondo.Unity.Server.Handlers
                 await turno.WaitAsync();
                 try
                 {
-                    var f = GetCurrentFight();
+                    // By its id: the one who opened it may have left the placement since, and his
+                    // session no longer has a fight to find.
+                    var f = FightById(currentFightId);
                     if (f == null || f.FightId != currentFightId) return;
                     if (f.State != Jondo.Unity.World.Fights.FightState.Placement) return;
 
                     Program.LogDebug($"[Combate] Se acabó el tiempo de colocación del combate #{currentFightId}.");
-                    await HandleTurnReady(stream, Array.Empty<byte>());
+                    if (GetCurrentFight() == f) await HandleTurnReady(stream, Array.Empty<byte>());
+
+                    // Whoever came in later and has not pressed ready is not waited for either.
+                    await StartWhoeverIsLeftAsync(f);
                 }
                 catch (Exception ex)
                 {
@@ -507,6 +517,20 @@ namespace Jondo.Unity.Server.Handlers
                 }
             }
 
+            // Both sides with their person before the board, as both views of the challenge
+            // show (frames 30-31 of «aceptar desafio», 31-32 of «enviar desafio»), and the swords
+            // for the map. The koliseo stands on no map and gets only the first.
+            {
+                var primero = todos[0].Sesion;
+                int suCasilla = fight.DeDondeVenian.TryGetValue(primero.State.CharacterId, out var origen)
+                    ? origen.Casilla
+                    : 0;
+                using (SessionContext.Push(primero))
+                {
+                    await AfterFightOpenedAsync(fight, null, suCasilla);
+                }
+            }
+
             // Y el reloj, sólo en el koliseo: allí la captura manda el f5 del kaa y aquí tiene que
             // vencer lo mismo que el cliente enseña. Cada uno el suyo, porque cada uno tiene su
             // socket y su combate en curso.
@@ -726,12 +750,22 @@ namespace Jondo.Unity.Server.Handlers
         /// que hace que el cliente pida el combate con un ijm en vez de pedir un mapa corriente
         /// con un jrh. Sin el carga el tablero y se queda en modo mapa normal.
         /// </remarks>
-        public static async Task SendFightEntryAsync(NetworkStream stream, FightInstance fight)
+        /// <param name="joining">
+        /// For somebody coming into a fight that is already there: no jsd and no kmu in front.
+        /// Measured in the two joins that were recorded from the joiner's side -- «meterse en
+        /// combate de otra persona» frames 1-7 and the follow capture 143-151 -- whose entry
+        /// starts straight at the kml.
+        /// </param>
+        public static async Task SendFightEntryAsync(NetworkStream stream, FightInstance fight,
+                                                     bool joining = false)
         {
-            await WriteFrameAsync(stream, ConnectionProtocol.BuildActorLeft(GameState.CharacterId));
+            if (!joining)
+            {
+                await WriteFrameAsync(stream, ConnectionProtocol.BuildActorLeft(GameState.CharacterId));
 
-            await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kmu,
-                Network.FightProtocol.BuildFightAgainst(fight.DefenderLeaderId)));
+                await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kmu,
+                    Network.FightProtocol.BuildFightAgainst(fight.DefenderLeaderId)));
+            }
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kml));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kmp,
                 Network.FightProtocol.BuildFightMapComing()));
@@ -803,20 +837,29 @@ namespace Jondo.Unity.Server.Handlers
             var monsters = fight.Reglas.EnfrenteHayMonstruos
                 ? fight.Rojo.ConvertAll(f => (long)f.MonsterId)
                 : new List<long>();
+            // The f6 is who OPENED the fight, whoever receives it: the follower of the follow
+            // capture gets Harmoo there (frame 162), the joiner of the sword capture Uvok (17),
+            // and in the challenge both views name the challenger. It was the receiver, which was
+            // right only for the one who attacked.
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kam,
                 Network.FightProtocol.BuildFightAnnounced(
                     fight.Reglas.TipoDelKam,
                     fight.DefenderLeaderId, monsters,
-                    fight.FightId, GameState.CharacterId)));
+                    fight.FightId, fight.ChallengerLeaderId)));
 
             // Y su kaa son seis bytes sin cuenta atrás. En un desafío no hay reloj de colocación:
             // no es que se esconda, es que el servidor real no manda ninguno -- el combate empieza
             // cuando los dos pulsan listo y no cuando se acaba un tiempo.
             // El koliseo sí tiene reloj: su kaa de la captura trae el f5=592. El desafío no.
+            //
+            // And the countdown is what is LEFT of it: 442 for the follower 0.7 s in, 403 for the
+            // fourth player of the dungeon capture 4.6 s in. Whoever comes in late must not be
+            // shown a full placement the server will not wait for.
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kaa,
                 fight.Reglas.KaaConCuentaAtras
                     ? Network.FightProtocol.BuildFightSummary(fight.Reglas.TipoDelKam,
-                                                              fight.Reglas.RelojDeColocacion)
+                          Math.Max(1, fight.PlacementDecisecondsLeft(fight.Reglas.RelojDeColocacion,
+                                                                     DateTime.UtcNow)))
                     : Network.FightProtocol.BuildDuelSummary()));
 
             // Cada uno con SU aspecto, leído de su propia ficha.
@@ -876,26 +919,31 @@ namespace Jondo.Unity.Server.Handlers
 
             // Detrás de las casillas, que es donde los pone la captura: quién está metido en el
             // combate y las cuatro opciones.
-            // A los dos lados cuando enfrente hay gente. En la captura del desafio llegan DOS kae,
-            // uno por jugador, y sin el suyo el rival se queda con las interfaces en blanco: el
-            // boton de listo sale vacio porque el cliente no sabe que ese combatiente es alguien
-            // que tiene que pulsarlo.
-            foreach (var fighter in fight.Todos)
+            //
+            // ONE kae, for the receiver's own side, with its leader and no members: every board of
+            // the captures has exactly that -- the follow capture's 168, the sword capture's 23
+            // (the red side, f6 = 1), the dungeon one's 184, both views of the challenge and the
+            // koliseo. The member lists travel in the kae BEFORE the board (AfterFightOpenedAsync
+            // and the join), which is what the two per-person kae here were standing in for: with
+            // a party on one side they named a second leader for it.
+            int miBando = fight.EquipoDe(GameState.CharacterId);
+            if (miBando >= 0)
             {
-                // Solo las personas. El kae dice «este combatiente es alguien que tiene que pulsar
-                // listo», y un bicho no pulsa nada. Los dos equipos por igual: el rojo ya lo
-                // filtraba y el azul no, y eso solo se sostenia mientras en el azul no pudiera
-                // haber nada que no fuese quien miraba.
-                if (fighter.IsMonster) continue;
-
                 await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kae,
-                    Network.FightProtocol.BuildFighterInFight(fighter.Id, fight.FightId)));
+                    FightJoinProtocol.BuildTeamUpdate(TeamOnMap(fight, miBando, withMembers: false),
+                                                      fight.FightId)));
             }
 
-            foreach (int option in Network.FightProtocol.FightOptions)
+            // Each side's options with their state, the attackers' and, when the other side is
+            // people, theirs too: both challenge captures show the kau with f1 = 1 (frames 29, 43).
+            foreach (int side in fight.Reglas.EnfrenteHayMonstruos
+                         ? new[] { FightInstance.Azules } : new[] { FightInstance.Azules, FightInstance.Rojos })
             {
-                await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kau,
-                    Network.FightProtocol.BuildFightOption(option, fight.FightId)));
+                foreach (int option in Network.FightProtocol.FightOptions)
+                {
+                    await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kau,
+                        Network.FightProtocol.BuildFightOption(side, option, fight.OptionOn(side, option), fight.FightId)));
+                }
             }
 
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jzu,
@@ -1824,6 +1872,12 @@ namespace Jondo.Unity.Server.Handlers
                 return;
             }
 
+            if (IsGroupFighting(groupId))
+            {
+                Program.LogDebug($"[Fight] Group {groupId} of map {here} is already being fought.");
+                return;
+            }
+
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jsq,
                 Network.FightProtocol.BuildFightAccepted()));
 
@@ -2175,6 +2229,7 @@ namespace Jondo.Unity.Server.Handlers
                 fight.CancelTurnTimer();
                 fight.CancelPlacementTimer();
                 _activeFights.TryRemove(fight.FightId, out _);
+                await FightOffTheMapAsync(fight);
                 return;
             }
 
@@ -2308,7 +2363,8 @@ namespace Jondo.Unity.Server.Handlers
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jxz,
                 Network.FightProtocol.BuildRound(fight.RoundNumber)));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Kau,
-                Network.FightProtocol.BuildFightOption(0, fight.FightId)));
+                Network.FightProtocol.BuildFightOption(FightInstance.Azules, FightInstance.OptionSecret,
+                    fight.OptionOn(FightInstance.Azules, FightInstance.OptionSecret), fight.FightId)));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jzu,
                 Network.FightProtocol.BuildTeams(CarouselOrder(fight))));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jwq,
@@ -2428,6 +2484,11 @@ namespace Jondo.Unity.Server.Handlers
             }
 
             Program.LogDebug("[Combate] El jugador se declara listo (kaq).");
+
+            // The members of his party with the automatic ready on are ready with him, BEFORE
+            // the count of who is ready is made: fight 488 of the follow capture starts on the
+            // leader's click with both kah side by side. See ReadyAlongWith in FightJoin.cs.
+            var alongWith = ReadyAlongWith(fight, GameState.CharacterId);
             bool allReady = fight.SetFighterReady(GameState.CharacterId);
 
             // No lqg + lqt here any more. See ApagarLaRegeneracionAsync for what that pair
@@ -2440,6 +2501,11 @@ namespace Jondo.Unity.Server.Handlers
             // listo, el otro no se enteraba nunca: en su pantalla el rival seguía sin marcar.
             await ATodosAsync(fight, ConnectionProtocol.Push(Op.Kah,
                 Network.FightProtocol.BuildReadyAck(GameState.CharacterId)));
+            foreach (long otro in alongWith)
+            {
+                await ATodosAsync(fight, ConnectionProtocol.Push(Op.Kah,
+                    Network.FightProtocol.BuildReadyAck(otro)));
+            }
 
             if (allReady) await StartFightAsync(fight);
         }
@@ -2464,6 +2530,8 @@ namespace Jondo.Unity.Server.Handlers
             fight.StartFight();
             fight.CancelPlacementTimer();
 
+            // The placement is over: the swords go from the map (hpr). Nobody joins any more.
+            await SwordsGoneAsync(fight);
 
             // Y la racha entera a cada uno desde su propio contexto. Se manda completa y por
             // separado, en vez de repartir «esto a todos y esto al que sea», porque el orden que
@@ -7506,10 +7574,16 @@ namespace Jondo.Unity.Server.Handlers
                 Program.LogDebug("[Fight] Ignored kme because the session has no active fight.");
                 return;
             }
+            // Leaving during the placement is captured now: «meterse en combate de otra persona
+            // haciendo click en la espadita y luego abandonar para salirse», frames 50-55.
+            if (fight.State == FightState.Placement)
+            {
+                await LeavePlacementAsync(stream, fight);
+                return;
+            }
             if (fight.State != FightState.Ongoing)
             {
-                Program.LogDebug($"[Fight] Ignored kme for fight #{fight.FightId} in state " +
-                                 $"{fight.State}; no placement surrender was captured.");
+                Program.LogDebug($"[Fight] Ignored kme for fight #{fight.FightId} in state {fight.State}.");
                 return;
             }
 
@@ -7626,11 +7700,20 @@ namespace Jondo.Unity.Server.Handlers
             // sin esto se quedaba plantado en la arena para siempre.
             bool azulGana = fight.SigueVivo(FightInstance.Azules);
 
+            var gente = Publico(fight);
+            PlanRewards(fight);
             await ACadaUnoAsync(fight, sesion =>
             {
                 return TerminarParaUnoAsync(sesion.Stream, fight,
                                             fight.HaGanado(sesion.State.CharacterId), azulGana);
             });
+            ForgetRewards(fight);
+            ChallengeWatcher.Forget(fight);
+
+            // And the map: the people drawn again where they came back -- they went off it with
+            // a kmu -- the count of fights one less, the group back or its replacement.
+            foreach (var sesion in gente) await BackOnTheMapAsync(sesion);
+            await FightOffTheMapAsync(fight);
         }
 
         /// <summary>Una línea de la lista de resultados.</summary>
@@ -7641,7 +7724,7 @@ namespace Jondo.Unity.Server.Handlers
         /// </remarks>
         private static Network.FightProtocol.FightResult FinDe(
             Fighter fighter, bool gano, bool esQuienMira, long xpGained,
-            Network.FightProtocol.Spoils spoils, bool gane)
+            Network.FightProtocol.Spoils spoils, bool gane, Reward? suyo = null)
         {
             // Un monstruo va sin ficha: solo quien es y si gano.
             if (fighter.IsMonster)
@@ -7663,13 +7746,17 @@ namespace Jondo.Unity.Server.Handlers
                 // el minimo que hay que tener para estar en ese nivel. Su barra sale vacia, y eso
                 // es cosmetico; lo que hacia falta era el NIVEL, que es lo que distingue a una
                 // persona de un monstruo.
+                // What he won, though, is known when the fight was shared out: each end screen of the
+                // follow capture lists both players' experience, kamas and items.
                 int nivel = Math.Max(1, fighter.Level);
                 return new Network.FightProtocol.FightResult
                 {
                     Fighter = fighter.Id,
                     Winner = gano,
                     Level = nivel,
-                    Xp = ExperienceTable.LevelFloor(nivel),
+                    Xp = ExperienceTable.LevelFloor(nivel) + (suyo?.Xp ?? 0),
+                    XpGained = suyo?.Xp ?? 0,
+                    Spoils = gano && suyo != null ? SpoilsOf(suyo) : null,
                 };
             }
 
@@ -7722,8 +7809,22 @@ namespace Jondo.Unity.Server.Handlers
             long xpGained = won ? ConElExtra(quePagan.Sum(m => (long)m.XpReward), extraDeRetos) : 0;
             long kamas = won ? ConElExtra(quePagan.Sum(m => 10L + (m.Level * 5L)), extraDeRetos) : 0;
             var caidos = new List<PlayerItem>();
-            var loot = won ? RollFightLoot(fight, extraDeRetos, out caidos)
-                           : new Dictionary<int, int>();
+            Dictionary<int, int> loot;
+
+            // His share, when the fight was planned for all its winners (FightRewards): the same
+            // numbers his partners see in their end screen.
+            var suyo = won ? RewardOf(fight, GameState.CharacterId) : null;
+            if (suyo != null)
+            {
+                xpGained = suyo.Xp;
+                kamas = suyo.Kamas;
+                loot = suyo.Loot;
+                EntregarBotin(loot, out caidos);
+            }
+            else
+            {
+                loot = won ? RollFightLoot(fight, extraDeRetos, out caidos) : new Dictionary<int, int>();
+            }
 
             // El koliseo paga LO SUYO. No entra por lo de arriba porque enfrente no hay monstruos
             // de los que sacar experiencia, kamas ni tabla de botín: lo paga el koliseo por ganar,
@@ -7788,12 +7889,12 @@ namespace Jondo.Unity.Server.Handlers
             foreach (var f in fight.Azul)
             {
                 if (f.EsInvocado || f.EsIlusion) continue;
-                results.Add(FinDe(f, azulGana, f.Id == yo, xpGained, spoils, gane));
+                results.Add(FinDe(f, azulGana, f.Id == yo, xpGained, spoils, gane, RewardOf(fight, f.Id)));
             }
             foreach (var f in fight.Rojo)
             {
                 if (f.EsInvocado || f.EsIlusion) continue;
-                results.Add(FinDe(f, !azulGana, f.Id == yo, xpGained, spoils, gane));
+                results.Add(FinDe(f, !azulGana, f.Id == yo, xpGained, spoils, gane, RewardOf(fight, f.Id)));
             }
 
             int duration = (int)Math.Max(0, (DateTime.UtcNow - fight.StartedAt).TotalMilliseconds);
@@ -7865,9 +7966,14 @@ namespace Jondo.Unity.Server.Handlers
             // dentro de la misma ejecución. O sea que al volver al mapa el grupo muerto seguía
             // dibujado, con su mismo id, y se le podía volver a atacar: experiencia, kamas y botín
             // infinitos sobre el mismo grupo.
-            if (won && fight.Reglas.BorraElGrupoAlGanar)
+            // ONCE per fight, by the first of its people: each of them runs this end in his own
+            // context, and with a party on the side every one of them removed the group and put a
+            // new one in its place.
+            if (won && fight.Reglas.BorraElGrupoAlGanar && SettlesTheGroup(fight))
             {
-                long muerto = GameState.CurrentFightMobId;
+                long muerto = GameState.CurrentFightMobId != 0
+                    ? GameState.CurrentFightMobId
+                    : fight.DefenderLeaderId;
                 MobSpawnManager.RemoveMobGroup(fight.RoleplayMapId, muerto);
                 Program.LogDebug($"[Combate] El grupo #{muerto} desaparece del mapa {fight.RoleplayMapId}.");
 
@@ -7883,6 +7989,7 @@ namespace Jondo.Unity.Server.Handlers
                         : MobSpawnManager.RespawnOneGroup(fight.RoleplayMapId);
                     if (repuesto != null)
                     {
+                        Replaced(fight, repuesto);
                         Program.LogDebug($"[Combate] Repuesto el grupo #{repuesto.MobId} en la casilla " +
                                          $"{repuesto.CellId} con {repuesto.Members.Count} miembro(s).");
                     }
@@ -8786,7 +8893,17 @@ namespace Jondo.Unity.Server.Handlers
         private static Dictionary<int, int> RollFightLoot(FightInstance fight, int extra,
                                                           out List<PlayerItem> caidos)
         {
-            caidos = new List<PlayerItem>();
+            var loot = RollLoot(fight, extra);
+            EntregarBotin(loot, out caidos);
+            return loot;
+        }
+
+        /// <summary>
+        /// The roll alone, for the player of this session, delivering nothing: what
+        /// <see cref="PlanRewards"/> rolls for each winner before anybody is shown the end.
+        /// </summary>
+        private static Dictionary<int, int> RollLoot(FightInstance fight, int extra)
+        {
             var loot = new Dictionary<int, int>();
 
             // Los INVOCADOS no pagan. Entran en el bando del que los invoca con IsMonster
@@ -8832,7 +8949,6 @@ namespace Jondo.Unity.Server.Handlers
                 }
             }
 
-            EntregarBotin(loot, out caidos);
             return loot;
         }
 
